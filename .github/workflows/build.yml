@@ -37,12 +37,17 @@ jobs:
           Copy-Item "ffmpeg_tmp\$binp" ffprobe.exe
         shell: pwsh
 
+      - name: Generate Windows icon
+        run: python generate_icon.py
+
       - name: Build EXE
         run: |
+          $iconFlag = if (Test-Path "icon.ico") { "--icon icon.ico" } else { "" }
           pyinstaller `
             --onefile `
             --windowed `
             --name GandalfOSINT `
+            $iconFlag `
             --collect-all yt_dlp `
             --collect-all webview `
             --add-data "app.html;." `

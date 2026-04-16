@@ -8,16 +8,21 @@ import shutil
 import re
 import ssl
 import urllib.request
+import platform
 
 try:
     import yt_dlp
 except ImportError:
     pass
 
+IS_WINDOWS     = platform.system() == "Windows"
 PLATFORMS      = ["YouTube", "TikTok", "Instagram", "Twitter", "Facebook",
                   "Vimeo", "Dailymotion", "Telegram"]
 PRORES_PROFILE = "1"
 PRORES_EXT     = ".mov"
+
+# On Windows, hide console windows spawned by subprocess
+SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
 
 
 def resource_path(name):
@@ -26,17 +31,40 @@ def resource_path(name):
 
 
 def find_ffmpeg():
-    bundled = resource_path("ffmpeg")
+    exe = "ffmpeg.exe" if IS_WINDOWS else "ffmpeg"
+    bundled = resource_path(exe)
     if os.path.isfile(bundled):
-        os.chmod(bundled, 0o755)
+        if not IS_WINDOWS:
+            os.chmod(bundled, 0o755)
         return bundled
     ff = shutil.which("ffmpeg")
     if ff:
         return ff
-    for p in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]:
-        if os.path.isfile(p):
-            return p
+    if IS_WINDOWS:
+        for p in [
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "ffmpeg", "bin", "ffmpeg.exe"),
+            os.path.join(os.environ.get("ProgramFiles", ""), "ffmpeg", "bin", "ffmpeg.exe"),
+            r"C:\ffmpeg\bin\ffmpeg.exe",
+        ]:
+            if os.path.isfile(p):
+                return p
+    else:
+        for p in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]:
+            if os.path.isfile(p):
+                return p
     return None
+
+
+def find_ffprobe(ffmpeg_path):
+    """Derive ffprobe path from ffmpeg path, handling .exe on Windows."""
+    if not ffmpeg_path:
+        return None
+    d = os.path.dirname(ffmpeg_path)
+    probe = "ffprobe.exe" if IS_WINDOWS else "ffprobe"
+    candidate = os.path.join(d, probe)
+    if os.path.isfile(candidate):
+        return candidate
+    return shutil.which("ffprobe")
 
 
 def fmt_dur(secs):
@@ -285,30 +313,30 @@ class Api:
                 self._last_file = fp
 
     def _has_video(self, path):
-        ffprobe = shutil.which("ffprobe") or (
-            self.ffmpeg_path.replace("ffmpeg", "ffprobe") if self.ffmpeg_path else None)
-        if not (ffprobe and os.path.isfile(ffprobe)):
+        ffprobe = find_ffprobe(self.ffmpeg_path)
+        if not ffprobe:
             return True
         try:
             out = subprocess.check_output(
                 [ffprobe, "-v", "error", "-select_streams", "v:0",
                  "-show_entries", "stream=codec_type",
                  "-of", "default=noprint_wrappers=1:nokey=1", path],
-                stderr=subprocess.DEVNULL, text=True)
+                stderr=subprocess.DEVNULL, text=True,
+                creationflags=SUBPROCESS_FLAGS)
             return "video" in out
         except Exception:
             return True
 
     def _get_duration(self, path):
-        ffprobe = shutil.which("ffprobe") or (
-            self.ffmpeg_path.replace("ffmpeg", "ffprobe") if self.ffmpeg_path else None)
-        if not (ffprobe and os.path.isfile(ffprobe)):
+        ffprobe = find_ffprobe(self.ffmpeg_path)
+        if not ffprobe:
             return None
         try:
             out = subprocess.check_output(
                 [ffprobe, "-v", "error", "-show_entries", "format=duration",
                  "-of", "default=noprint_wrappers=1:nokey=1", path],
-                stderr=subprocess.DEVNULL, text=True)
+                stderr=subprocess.DEVNULL, text=True,
+                creationflags=SUBPROCESS_FLAGS)
             return float(out.strip())
         except Exception:
             return None
@@ -344,7 +372,8 @@ class Api:
         duration = self._get_duration(src)
         try:
             proc = subprocess.Popen(cmd, stderr=subprocess.PIPE,
-                                    universal_newlines=True, bufsize=1)
+                                    universal_newlines=True, bufsize=1,
+                                    creationflags=SUBPROCESS_FLAGS)
             t_re = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
             for line in proc.stderr:
                 m = t_re.search(line)
@@ -422,9 +451,13 @@ if __name__ == "__main__":
     api = Api()
     html_path = resource_path("app.html")
 
+    # Convert to a proper file:// URI (handles Windows drive letters & backslashes)
+    from pathlib import Path
+    html_uri = Path(html_path).as_uri()
+
     window = webview.create_window(
         "Gandalf OSINT",
-        url=f"file://{html_path}",
+        url=html_uri,
         js_api=api,
         width=960,
         height=880,
