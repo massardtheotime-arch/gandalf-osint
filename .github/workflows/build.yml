@@ -3,14 +3,17 @@ name: Build — Windows EXE & macOS DMG
 on:
   push:
     tags:
-      - "v*"          # déclenché par : git tag v1.0 && git push --tags
-  workflow_dispatch:  # ou manuellement depuis l'onglet Actions
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
 
   # ─────────────────────────────────────────────────────────────────────────────
   build-windows:
-    name: 🪟 Windows EXE
+    name: Windows EXE
     runs-on: windows-latest
 
     steps:
@@ -23,19 +26,25 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: |
-          pip install pyinstaller pywebview yt-dlp openpyxl pillow
+        run: pip install pyinstaller pywebview yt-dlp openpyxl pillow
 
       - name: Download ffmpeg (Windows)
-        run: |
-          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
-          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp
-          $bin = Get-ChildItem -Recurse -Name "ffmpeg.exe" ffmpeg_tmp | Select-Object -First 1
-          Copy-Item "ffmpeg_tmp\$bin" ffmpeg.exe
-          $binp = Get-ChildItem -Recurse -Name "ffprobe.exe" ffmpeg_tmp | Select-Object -First 1
-          Copy-Item "ffmpeg_tmp\$binp" ffprobe.exe
         shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          Write-Host "Downloading ffmpeg..."
+          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip -UseBasicParsing
+          Write-Host "Extracting..."
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp -Force
+          $bin = Get-ChildItem -Path ffmpeg_tmp -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+          $binp = Get-ChildItem -Path ffmpeg_tmp -Recurse -Filter "ffprobe.exe" | Select-Object -First 1
+          Copy-Item $bin.FullName -Destination "ffmpeg.exe"
+          Copy-Item $binp.FullName -Destination "ffprobe.exe"
+          Write-Host "ffmpeg.exe and ffprobe.exe ready."
+
+      - name: Generate Windows icon
+        run: python generate_icon.py
 
       - name: Build EXE
         run: |
@@ -53,6 +62,33 @@ jobs:
             -y `
             downloader_app.py
         shell: pwsh
+        run: |
+          $pyiArgs = @(
+            "--onefile",
+            "--windowed",
+            "--name", "GandalfOSINT",
+            "--collect-all", "yt_dlp",
+            "--collect-all", "webview",
+            "--add-data", "app.html;.",
+            "--add-data", "gandalf.gif;.",
+            "--add-binary", "ffmpeg.exe;.",
+            "--add-binary", "ffprobe.exe;.",
+            "-y",
+            "downloader_app.py"
+          )
+          if (Test-Path "icon.ico") {
+            $pyiArgs = @("--icon", "icon.ico") + $pyiArgs
+          }
+          pyinstaller @pyiArgs
+
+      - name: Verify output
+        shell: pwsh
+        run: |
+          if (!(Test-Path "dist/GandalfOSINT.exe")) {
+            Write-Error "GandalfOSINT.exe not found in dist/"
+            exit 1
+          }
+          Write-Host "GandalfOSINT.exe size: $((Get-Item dist/GandalfOSINT.exe).Length / 1MB) MB"
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
@@ -62,7 +98,7 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────────────────────
   build-macos:
-    name: 🍎 macOS DMG
+    name: macOS DMG
     runs-on: macos-latest
 
     steps:
@@ -81,8 +117,10 @@ jobs:
 
       - name: Build APP
         run: |
+          FFMPEG_PATH=$(which ffmpeg)
+          FFPROBE_PATH=$(which ffprobe)
           pyinstaller \
-            --onefile \
+            --onedir \
             --windowed \
             --name GandalfOSINT \
             --icon icon.icns \
@@ -90,38 +128,64 @@ jobs:
             --collect-all webview \
             --add-data "app.html:." \
             --add-data "gandalf.gif:." \
-            --add-binary "$(which ffmpeg):." \
-            --add-binary "$(which ffprobe):." \
+            --add-binary "$FFMPEG_PATH:." \
+            --add-binary "$FFPROBE_PATH:." \
             -y \
             downloader_app.py
 
+      - name: Verify .app bundle
+        run: |
+          ls -la dist/
+          test -d "dist/GandalfOSINT.app" && echo ".app found" || true
+          ls -laR dist/GandalfOSINT.app/ 2>/dev/null | head -30 || true
+
       - name: Create DMG
         run: |
+          rm -f GandalfOSINT.dmg
           create-dmg \
             --volname "Gandalf OSINT" \
             --window-size 600 380 \
             --icon-size 120 \
             --icon "GandalfOSINT.app" 150 185 \
             --app-drop-link 450 185 \
+            --no-internet-enable \
             "GandalfOSINT.dmg" \
-            "dist/GandalfOSINT.app"
+            "dist/GandalfOSINT.app" \
+            || true
 
-      - name: Upload DMG artifact
+      - name: Fallback — zip if DMG failed
+        if: ${{ !cancelled() }}
+        run: |
+          if [ ! -f "GandalfOSINT.dmg" ]; then
+            echo "DMG creation failed, falling back to zip"
+            cd dist && zip -r ../GandalfOSINT.zip GandalfOSINT.app
+          fi
+
+      - name: Upload macOS artifact
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: GandalfOSINT-macOS
-          path: GandalfOSINT.dmg
+          path: |
+            GandalfOSINT.dmg
+            GandalfOSINT.zip
+          if-no-files-found: warn
 
   # ─────────────────────────────────────────────────────────────────────────────
   release:
-    name: 📦 GitHub Release
+    name: GitHub Release
     needs: [build-windows, build-macos]
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && needs.build-windows.result == 'success' }}
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
 
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
+        with:
+          merge-multiple: false
+
+      - name: List artifacts
+        run: find . -type f | head -20
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -129,4 +193,6 @@ jobs:
           files: |
             GandalfOSINT-Windows/GandalfOSINT.exe
             GandalfOSINT-macOS/GandalfOSINT.dmg
+            GandalfOSINT-macOS/GandalfOSINT.zip
+          fail_on_unmatched_files: false
           generate_release_notes: true
