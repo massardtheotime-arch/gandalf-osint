@@ -1,4 +1,3 @@
-import webview
 import threading
 import json
 import os
@@ -6,16 +5,14 @@ import sys
 import subprocess
 import shutil
 import re
-import ssl
-import urllib.request
+
+import webview
 
 try:
     import yt_dlp
 except ImportError:
     pass
 
-PLATFORMS      = ["YouTube", "TikTok", "Instagram", "Twitter", "Facebook",
-                  "Vimeo", "Dailymotion", "Telegram"]
 PRORES_PROFILE = "1"
 PRORES_EXT     = ".mov"
 
@@ -26,10 +23,13 @@ def resource_path(name):
 
 
 def find_ffmpeg():
-    bundled = resource_path("ffmpeg")
-    if os.path.isfile(bundled):
-        os.chmod(bundled, 0o755)
-        return bundled
+    # On Windows the bundled binary is ffmpeg.exe
+    for name in ("ffmpeg.exe", "ffmpeg"):
+        bundled = resource_path(name)
+        if os.path.isfile(bundled):
+            if sys.platform != "win32":
+                os.chmod(bundled, 0o755)
+            return bundled
     ff = shutil.which("ffmpeg")
     if ff:
         return ff
@@ -82,6 +82,11 @@ class VideoInfo:
                 out.append({"label": f"{h}p", "badge": "VIDÉO",
                             "spec": f"bestvideo[height<={h}]+bestaudio/best[height<={h}]",
                             "size": fmt_size(sz), "audio": False})
+        if not out:
+            any_vid = [f for f in raw if f.get("vcodec", "none") not in ("none", None, "")]
+            if any_vid:
+                out.append({"label": "Meilleure", "badge": "VIDÉO",
+                            "spec": "bestvideo+bestaudio/best", "size": "", "audio": False})
         audio = [f for f in raw
                  if f.get("vcodec", "none") in ("none", None, "")
                  and f.get("acodec", "none") not in ("none", None, "")]
@@ -89,7 +94,7 @@ class VideoInfo:
             out.append({"label": "Audio MP3", "badge": "AUDIO",
                         "spec": "bestaudio/best", "size": "", "audio": True})
         if not out:
-            out.append({"label": "Meilleur", "badge": "VIDÉO",
+            out.append({"label": "Meilleure", "badge": "VIDÉO",
                         "spec": "bestvideo+bestaudio/best", "size": "", "audio": False})
         return out
 
@@ -101,26 +106,24 @@ class VideoInfo:
 
 class Api:
     def __init__(self):
-        self._window       = None
-        self.output_dir    = os.path.expanduser("~/Downloads")
-        self.ffmpeg_path   = find_ffmpeg()
-        self._video_infos  = []
-        self._xlsx_rows    = []
-        self.running       = False
-        self.analysing     = False
-        self._last_file    = None
+        self._window        = None
+        self.output_dir     = os.path.expanduser("~/Downloads")
+        self.ffmpeg_path    = find_ffmpeg()
+        self._video_infos   = []
+        self._xlsx_rows     = []
+        self.running        = False
+        self.analysing      = False
+        self._last_file     = None
         self.transcode_mode = "prores"
+        self.xlsx_quality   = "bestvideo+bestaudio/best"
 
-    def set_window(self, w):
-        self._window = w
-
-    # ── Called by JS ──────────────────────────────────────────────────────────
+    # ── JS → Python ──────────────────────────────────────────────────────────
 
     def get_initial_state(self):
         return {
-            "output_dir": self.output_dir,
+            "output_dir":       self.output_dir,
             "ffmpeg_available": bool(self.ffmpeg_path),
-            "transcode_mode": self.transcode_mode,
+            "transcode_mode":   self.transcode_mode,
         }
 
     def analyse_urls(self, urls_text):
@@ -134,11 +137,15 @@ class Api:
         threading.Thread(target=self._fetch_all, args=(urls,), daemon=True).start()
 
     def set_quality(self, card_idx, fmt_idx):
+        card_idx, fmt_idx = int(card_idx), int(fmt_idx)
         if 0 <= card_idx < len(self._video_infos):
             self._video_infos[card_idx].sel = fmt_idx
 
     def set_transcode(self, mode):
         self.transcode_mode = mode
+
+    def set_xlsx_quality(self, spec):
+        self.xlsx_quality = spec
 
     def download_all(self):
         if self.running or not self._video_infos:
@@ -149,8 +156,9 @@ class Api:
 
     def import_xlsx(self):
         result = self._window.create_file_dialog(
-            webview.OPEN_DIALOG, allow_multiple=False,
-            file_types=("Excel (*.xlsx;*.xls)", "All files (*.*)"))
+            webview.OPEN_DIALOG,
+            file_types=('Excel files (*.xlsx *.xls)', 'All files (*.*)')
+        )
         if not result:
             return None
         path = result[0]
@@ -188,21 +196,26 @@ class Api:
         threading.Thread(target=self._batch_xlsx, daemon=True).start()
 
     def choose_dir(self):
-        result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
+        result = self._window.create_file_dialog(
+            webview.FOLDER_DIALOG, directory=self.output_dir)
         if result:
             self.output_dir = result[0]
-            return self.output_dir
-        return None
+            return result[0]
+        return ""
 
     def open_link(self, url):
-        import webbrowser
-        webbrowser.open(url)
+        if sys.platform == "win32":
+            os.startfile(url)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", url])
+        else:
+            subprocess.Popen(["xdg-open", url])
 
-    # ── Internal ──────────────────────────────────────────────────────────────
+    # ── Internal ─────────────────────────────────────────────────────────────
 
     def _emit(self, event, data=None):
+        payload = json.dumps(data) if data is not None else "null"
         if self._window:
-            payload = json.dumps(data) if data is not None else "null"
             self._window.evaluate_js(f"window.onEvent('{event}', {payload})")
 
     def _fetch_all(self, urls):
@@ -221,7 +234,7 @@ class Api:
                 self._emit("log", f"Erreur analyse : {e}")
         self.analysing = False
         self._emit("analyse_done", len(self._video_infos))
-        self._emit("status", f"{len(self._video_infos)} vidéo(s) prête(s) — choisissez la qualité.")
+        self._emit("status", f"{len(self._video_infos)} vidéo(s) prête(s).")
 
     def _batch(self):
         total = len(self._video_infos)
@@ -355,8 +368,7 @@ class Api:
             proc.wait()
             if proc.returncode == 0:
                 if tmp and os.path.isfile(tmp):
-                    if os.path.isfile(dst):
-                        os.remove(dst)
+                    if os.path.isfile(dst): os.remove(dst)
                     os.rename(tmp, dst)
                 try:
                     if os.path.abspath(src) != os.path.abspath(dst):
@@ -391,11 +403,13 @@ class Api:
 
     def _run_named(self, n, url, custom_name, total):
         self._last_file = None
+        is_audio = self.xlsx_quality == "bestaudio/best"
         try:
             out  = os.path.join(self.output_dir, f"{custom_name}.%(ext)s")
+            pp   = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3",
+                     "preferredquality": "192"}] if is_audio else []
             opts = {
-                "format": "bestvideo+bestaudio/best", "outtmpl": out,
-                "postprocessors": [],
+                "format": self.xlsx_quality, "outtmpl": out, "postprocessors": pp,
                 "progress_hooks":      [lambda d, _n=n: self._dl_hook(d, _n)],
                 "postprocessor_hooks": [self._pp_hook],
                 "quiet": True, "no_warnings": False,
@@ -410,7 +424,7 @@ class Api:
             if not dl or not os.path.isfile(dl):
                 raise FileNotFoundError("Fichier introuvable.")
             tc = self.transcode_mode
-            if tc != "none" and self._has_video(dl):
+            if tc != "none" and not is_audio and self._has_video(dl):
                 self._transcode(n, dl, total, tc, final_name=custom_name)
             else:
                 self._emit("log", f"[{n}/{total}] ✓  {os.path.basename(dl)}")
@@ -421,15 +435,16 @@ class Api:
 if __name__ == "__main__":
     api = Api()
     html_path = resource_path("app.html")
+    icon_path = resource_path("icon.icns")
 
     window = webview.create_window(
         "Gandalf OSINT",
-        url=f"file://{html_path}",
+        html_path,
         js_api=api,
         width=960,
         height=880,
         min_size=(700, 600),
-        background_color="#0f0f13",
+        background_color="#0a0a0d",
     )
-    api.set_window(window)
+    api._window = window
     webview.start()
