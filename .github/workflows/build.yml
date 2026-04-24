@@ -47,20 +47,6 @@ jobs:
         run: python generate_icon.py
 
       - name: Build EXE
-        run: |
-          pyinstaller `
-            --onefile `
-            --windowed `
-            --name GandalfOSINT `
-            --collect-all yt_dlp `
-            --collect-all webview `
-            --add-data "app.html;." `
-            --add-data "gandalf.gif;." `
-            --add-data "gollum.png;." `
-            --add-binary "ffmpeg.exe;." `
-            --add-binary "ffprobe.exe;." `
-            -y `
-            downloader_app.py
         shell: pwsh
         run: |
           $pyiArgs = @(
@@ -71,6 +57,7 @@ jobs:
             "--collect-all", "webview",
             "--add-data", "app.html;.",
             "--add-data", "gandalf.gif;.",
+            "--add-data", "gollum.png;.",
             "--add-binary", "ffmpeg.exe;.",
             "--add-binary", "ffprobe.exe;.",
             "-y",
