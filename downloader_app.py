@@ -5,6 +5,7 @@ import sys
 import subprocess
 import shutil
 import re
+import platform
 
 import webview
 
@@ -13,6 +14,7 @@ try:
 except ImportError:
     pass
 
+IS_WINDOWS     = platform.system() == "Windows"
 PRORES_PROFILE = "1"
 PRORES_EXT     = ".mov"
 
