@@ -331,6 +331,29 @@
     </div>
   </div>
 
+  <!-- COOKIES -->
+  <div class="section section-sm">
+    <div class="tc-label-row">Connexion — Instagram, TikTok, Twitter…</div>
+    <div class="radio-list">
+      <label class="radio-row">
+        <input type="radio" name="ck" value="" onchange="setCookies('')" checked>
+        Aucun — contenu public uniquement
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="ck" value="safari" onchange="setCookies('safari')">
+        Utiliser Safari <span style="color:var(--muted2)">(connecté à Instagram/TikTok…)</span>
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="ck" value="chrome" onchange="setCookies('chrome')">
+        Utiliser Chrome
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="ck" value="firefox" onchange="setCookies('firefox')">
+        Utiliser Firefox
+      </label>
+    </div>
+  </div>
+
   <!-- TRANSCODAGE -->
   <div class="section section-sm">
     <div class="tc-label-row">Transcodage</div>
@@ -395,6 +418,7 @@ window.addEventListener('load', () => {
   pywebview.api.get_initial_state().then(s => {
     document.getElementById('folder-path-inline').textContent = s.output_dir;
     if (s.transcode_mode) setTc(s.transcode_mode, false);
+    if (s.cookies_browser) document.querySelectorAll('input[name=ck]').forEach(r => r.checked = r.value === s.cookies_browser);
   });
 });
 
@@ -544,6 +568,10 @@ async function doImportXlsx() {
 function doDownloadXlsx() {
   if (downloading) return;
   pywebview.api.download_xlsx();
+}
+
+function setCookies(browser) {
+  pywebview.api.set_cookies_browser(browser);
 }
 
 function setProgress(pct) {

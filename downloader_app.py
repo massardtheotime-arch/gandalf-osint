@@ -142,15 +142,22 @@ class Api:
         self._last_file     = None
         self.transcode_mode = "prores"
         self.xlsx_quality   = "bestvideo+bestaudio/best"
+        self.cookies_file    = ""
+        self.cookies_browser = ""   # "safari", "chrome", "firefox"
 
     # ── JS → Python ──────────────────────────────────────────────────────────
 
     def get_initial_state(self):
         return {
-            "output_dir":       self.output_dir,
-            "ffmpeg_available": bool(self.ffmpeg_path),
-            "transcode_mode":   self.transcode_mode,
+            "output_dir":        self.output_dir,
+            "ffmpeg_available":  bool(self.ffmpeg_path),
+            "transcode_mode":    self.transcode_mode,
+            "cookies_browser":   self.cookies_browser,
         }
+
+    def set_cookies_browser(self, browser):
+        # browser = "safari" | "chrome" | "firefox" | ""
+        self.cookies_browser = browser
 
     def analyse_urls(self, urls_text):
         if self.analysing or self.running:
@@ -248,6 +255,8 @@ class Api:
         ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True}
         if self.ffmpeg_path:
             ydl_opts["ffmpeg_location"] = os.path.dirname(self.ffmpeg_path)
+        if self.cookies_browser:
+            ydl_opts["cookiesfrombrowser"] = (self.cookies_browser,)
         for i, url in enumerate(urls):
             self._emit("status", f"Analyse [{i+1}/{len(urls)}] {url[:60]}")
             try:
@@ -292,7 +301,7 @@ class Api:
             self._emit("log", f"[{n}/{total}] ✗ {e}")
 
     def _ydl_opts(self, spec, n):
-        out = os.path.join(self.output_dir, "%(title)s.%(ext)s")
+        out = os.path.join(self.output_dir, "%(title)s_%(id)s.%(ext)s")
         pp  = []
         if spec == "bestaudio/best":
             pp = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}]
@@ -304,6 +313,8 @@ class Api:
         }
         if self.ffmpeg_path:
             opts["ffmpeg_location"] = os.path.dirname(self.ffmpeg_path)
+        if self.cookies_browser:
+            opts["cookiesfrombrowser"] = (self.cookies_browser,)
         return opts
 
     def _dl_hook(self, d, n):
