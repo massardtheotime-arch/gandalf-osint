@@ -247,25 +247,18 @@ class Api:
             self._window.evaluate_js(f"window.onEvent('{event}', {payload})")
 
     def _cookie_opts(self):
-        """Return cookie options, silently disabling if browser access fails."""
         if not self.cookies_browser:
             return {}
-        try:
-            import yt_dlp.cookies as _c
-            _c.extract_cookies_from_browser(self.cookies_browser, None, None)
-        except PermissionError:
-            self._emit("log", f"⚠️ Accès refusé aux cookies {self.cookies_browser} — va dans Réglages Système → Confidentialité → Accès complet au disque et ajoute Terminal.")
-            return {}
-        except Exception:
-            pass
         return {"cookiesfrombrowser": (self.cookies_browser,)}
 
     def _fetch_all(self, urls):
-        ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True,
+        cookie_opts = self._cookie_opts()
+        self._emit("log", f"🍪 Cookies: {self.cookies_browser or 'aucun'}")
+        ydl_opts = {"quiet": False, "no_warnings": False, "skip_download": True,
                     "remote_components": ["ejs:github"]}
         if self.ffmpeg_path:
             ydl_opts["ffmpeg_location"] = os.path.dirname(self.ffmpeg_path)
-        ydl_opts.update(self._cookie_opts())
+        ydl_opts.update(cookie_opts)
         for i, url in enumerate(urls):
             self._emit("status", f"Analyse [{i+1}/{len(urls)}] {url[:60]}")
             try:
@@ -275,7 +268,7 @@ class Api:
                 self._video_infos.append(info)
                 self._emit("video_analysed", info.to_dict())
             except Exception as e:
-                self._emit("log", f"Erreur analyse : {e}")
+                self._emit("log", f"✗ Erreur analyse : {e}")
         self.analysing = False
         self._emit("analyse_done", len(self._video_infos))
         self._emit("status", f"{len(self._video_infos)} vidéo(s) prête(s).")
