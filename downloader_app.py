@@ -18,6 +18,18 @@ IS_WINDOWS     = platform.system() == "Windows"
 PRORES_PROFILE = "1"
 PRORES_EXT     = ".mov"
 
+# Patch PATH for bundled .app — deno is not in the default macOS app PATH
+# yt-dlp needs deno to solve YouTube's EJS anti-bot JS challenges
+if platform.system() == "Darwin":
+    for _deno_dir in [
+        '/opt/homebrew/bin',
+        '/usr/local/bin',
+        os.path.expanduser('~/.deno/bin'),
+    ]:
+        if os.path.isfile(os.path.join(_deno_dir, 'deno')):
+            os.environ['PATH'] = _deno_dir + ':' + os.environ.get('PATH', '')
+            break
+
 # On Windows, hide console windows spawned by subprocess
 SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
 
