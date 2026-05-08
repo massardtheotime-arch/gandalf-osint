@@ -106,22 +106,17 @@ class VideoInfo:
                 best = max(vids, key=lambda f: f.get("tbr") or 0)
                 sz = best.get("filesize") or best.get("filesize_approx")
                 out.append({"label": f"{h}p", "badge": "VIDÉO",
-                            "spec": f"bestvideo[height<={h}]+bestaudio/best[height<={h}]",
+                            "spec": f"bestvideo[height<={h}]+bestaudio/bestvideo[height<={h}]/best[height<={h}]/best",
                             "size": fmt_size(sz), "audio": False})
         if not out:
-            any_vid = [f for f in raw if f.get("vcodec", "none") not in ("none", None, "")]
-            if any_vid:
-                out.append({"label": "Meilleure", "badge": "VIDÉO",
-                            "spec": "bestvideo+bestaudio/best", "size": "", "audio": False})
+            out.append({"label": "Meilleure", "badge": "VIDÉO",
+                        "spec": "bestvideo+bestaudio/best", "size": "", "audio": False})
         audio = [f for f in raw
                  if f.get("vcodec", "none") in ("none", None, "")
                  and f.get("acodec", "none") not in ("none", None, "")]
         if audio:
             out.append({"label": "Audio MP3", "badge": "AUDIO",
                         "spec": "bestaudio/best", "size": "", "audio": True})
-        if not out:
-            out.append({"label": "Meilleure", "badge": "VIDÉO",
-                        "spec": "bestvideo+bestaudio/best", "size": "", "audio": False})
         return out
 
     def to_dict(self):
@@ -251,12 +246,26 @@ class Api:
         if self._window:
             self._window.evaluate_js(f"window.onEvent('{event}', {payload})")
 
+    def _cookie_opts(self):
+        """Return cookie options, silently disabling if browser access fails."""
+        if not self.cookies_browser:
+            return {}
+        try:
+            import yt_dlp.cookies as _c
+            _c.extract_cookies_from_browser(self.cookies_browser, None, None)
+        except PermissionError:
+            self._emit("log", f"⚠️ Accès refusé aux cookies {self.cookies_browser} — va dans Réglages Système → Confidentialité → Accès complet au disque et ajoute Terminal.")
+            return {}
+        except Exception:
+            pass
+        return {"cookiesfrombrowser": (self.cookies_browser,)}
+
     def _fetch_all(self, urls):
-        ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+        ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True,
+                    "remote_components": ["ejs:github"]}
         if self.ffmpeg_path:
             ydl_opts["ffmpeg_location"] = os.path.dirname(self.ffmpeg_path)
-        if self.cookies_browser:
-            ydl_opts["cookiesfrombrowser"] = (self.cookies_browser,)
+        ydl_opts.update(self._cookie_opts())
         for i, url in enumerate(urls):
             self._emit("status", f"Analyse [{i+1}/{len(urls)}] {url[:60]}")
             try:
@@ -310,11 +319,11 @@ class Api:
             "progress_hooks":      [lambda d, _n=n: self._dl_hook(d, _n)],
             "postprocessor_hooks": [self._pp_hook],
             "quiet": True, "no_warnings": False, "merge_output_format": "mp4",
+            "remote_components": ["ejs:github"],
         }
         if self.ffmpeg_path:
             opts["ffmpeg_location"] = os.path.dirname(self.ffmpeg_path)
-        if self.cookies_browser:
-            opts["cookiesfrombrowser"] = (self.cookies_browser,)
+        opts.update(self._cookie_opts())
         return opts
 
     def _dl_hook(self, d, n):
