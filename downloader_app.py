@@ -20,6 +20,7 @@ PRORES_EXT     = ".mov"
 
 # Patch PATH for bundled .app — deno is not in the default macOS app PATH
 # yt-dlp needs deno to solve YouTube's EJS anti-bot JS challenges
+_DENO_FOUND = False
 if platform.system() == "Darwin":
     for _deno_dir in [
         '/opt/homebrew/bin',
@@ -28,6 +29,8 @@ if platform.system() == "Darwin":
     ]:
         if os.path.isfile(os.path.join(_deno_dir, 'deno')):
             os.environ['PATH'] = _deno_dir + ':' + os.environ.get('PATH', '')
+            _DENO_FOUND = True
+            _DENO_PATH  = os.path.join(_deno_dir, 'deno')
             break
 
 # On Windows, hide console windows spawned by subprocess
@@ -155,6 +158,18 @@ class Api:
     # ── JS → Python ──────────────────────────────────────────────────────────
 
     def get_initial_state(self):
+        import threading
+        def _startup_log():
+            import time; time.sleep(0.6)
+            if _DENO_FOUND:
+                self._emit("log", f"✓ deno : {_DENO_PATH}")
+            else:
+                self._emit("log", "⚠️  deno introuvable — YouTube risque d'échouer")
+            if self.ffmpeg_path:
+                self._emit("log", f"✓ ffmpeg : {self.ffmpeg_path}")
+            else:
+                self._emit("log", "⚠️  ffmpeg introuvable")
+        threading.Thread(target=_startup_log, daemon=True).start()
         return {
             "output_dir":        self.output_dir,
             "ffmpeg_available":  bool(self.ffmpeg_path),
