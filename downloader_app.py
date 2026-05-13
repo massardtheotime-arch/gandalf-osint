@@ -18,21 +18,6 @@ IS_WINDOWS     = platform.system() == "Windows"
 PRORES_PROFILE = "1"
 PRORES_EXT     = ".mov"
 
-# Patch PATH for bundled .app — deno is not in the default macOS app PATH
-# yt-dlp needs deno to solve YouTube's EJS anti-bot JS challenges
-_DENO_FOUND = False
-if platform.system() == "Darwin":
-    for _deno_dir in [
-        '/opt/homebrew/bin',
-        '/usr/local/bin',
-        os.path.expanduser('~/.deno/bin'),
-    ]:
-        if os.path.isfile(os.path.join(_deno_dir, 'deno')):
-            os.environ['PATH'] = _deno_dir + ':' + os.environ.get('PATH', '')
-            _DENO_FOUND = True
-            _DENO_PATH  = os.path.join(_deno_dir, 'deno')
-            break
-
 # On Windows, hide console windows spawned by subprocess
 SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
 
@@ -40,6 +25,36 @@ SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
 def resource_path(name):
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, name)
+
+
+def find_deno():
+    """Return path to deno binary — bundled inside .app first, then system."""
+    # 1. Bundled binary (works on any Mac, no installation required)
+    bundled = resource_path("deno")
+    if os.path.isfile(bundled):
+        try:
+            os.chmod(bundled, 0o755)
+        except OSError:
+            pass
+        return bundled
+    # 2. System-installed deno (fallback for dev runs)
+    if not IS_WINDOWS:
+        for d in ["/opt/homebrew/bin", "/usr/local/bin",
+                  os.path.expanduser("~/.deno/bin")]:
+            candidate = os.path.join(d, "deno")
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
+# Make deno available to yt-dlp (needed to solve YouTube EJS anti-bot challenges)
+_deno_bin  = find_deno()
+_DENO_FOUND = _deno_bin is not None
+_DENO_PATH  = _deno_bin or ""
+if _deno_bin:
+    _deno_dir = os.path.dirname(_deno_bin)
+    if _deno_dir:
+        os.environ["PATH"] = _deno_dir + ":" + os.environ.get("PATH", "")
 
 
 def find_ffmpeg():

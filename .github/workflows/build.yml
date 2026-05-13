@@ -102,6 +102,19 @@ jobs:
           pip install pyinstaller pywebview yt-dlp openpyxl pillow
           brew install ffmpeg create-dmg
 
+      - name: Bundle deno (universal binary arm64 + x86_64)
+        run: |
+          DENO_VERSION=$(curl -s https://dl.deno.land/release-latest.txt)
+          echo "Deno version: $DENO_VERSION"
+          curl -fsSL "https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-aarch64-apple-darwin.zip" -o deno_arm64.zip
+          curl -fsSL "https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-x86_64-apple-darwin.zip"  -o deno_x86_64.zip
+          unzip -o deno_arm64.zip && mv deno deno_arm64
+          unzip -o deno_x86_64.zip && mv deno deno_x86_64
+          lipo -create -output deno deno_arm64 deno_x86_64
+          chmod +x deno
+          rm -f deno_arm64.zip deno_x86_64.zip deno_arm64 deno_x86_64
+          echo "deno universal: $(file deno)"
+
       - name: Build APP
         run: |
           FFMPEG_PATH=$(which ffmpeg)
@@ -117,6 +130,7 @@ jobs:
             --add-data "gandalf.gif:." \
             --add-binary "$FFMPEG_PATH:." \
             --add-binary "$FFPROBE_PATH:." \
+            --add-binary "deno:." \
             -y \
             downloader_app.py
 

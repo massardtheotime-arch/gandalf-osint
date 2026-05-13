@@ -25,17 +25,36 @@ fi
 echo "    ffmpeg : $FFMPEG_PATH  ✓"
 echo "    ffprobe: $FFPROBE_PATH  ✓"
 
-# ── 2. Mise à jour des dépendances Python ─────────────────────────
+# ── 2. Deno universel (arm64 + x86_64) ───────────────────────────
+echo ""
+echo "==> Vérification de deno bundlé..."
+if [ ! -f "deno" ]; then
+  echo "    Téléchargement de deno (binaire universel)..."
+  DENO_VERSION=$(curl -s https://dl.deno.land/release-latest.txt)
+  echo "    Version : $DENO_VERSION"
+  curl -fsSL "https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-aarch64-apple-darwin.zip" -o _deno_arm64.zip
+  curl -fsSL "https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-x86_64-apple-darwin.zip"  -o _deno_x86.zip
+  unzip -o _deno_arm64.zip && mv deno _deno_arm64
+  unzip -o _deno_x86.zip   && mv deno _deno_x86
+  lipo -create -output deno _deno_arm64 _deno_x86
+  chmod +x deno
+  rm -f _deno_arm64.zip _deno_x86.zip _deno_arm64 _deno_x86
+  echo "    ✓ deno universel créé : $(du -sh deno | cut -f1)"
+else
+  echo "    ✓ deno déjà présent : $(du -sh deno | cut -f1)"
+fi
+
+# ── 3. Mise à jour des dépendances Python ─────────────────────────
 echo ""
 echo "==> Mise à jour yt-dlp et pyinstaller..."
 pip3 install -q --upgrade yt-dlp pyinstaller pywebview openpyxl
 
-# ── 3. Nettoyage des builds précédents ───────────────────────────
+# ── 4. Nettoyage des builds précédents ───────────────────────────
 echo ""
 echo "==> Nettoyage..."
 rm -rf build dist
 
-# ── 4. Build PyInstaller (.app) ───────────────────────────────────
+# ── 5. Build PyInstaller (.app) ───────────────────────────────────
 echo ""
 echo "==> Build PyInstaller (.app)..."
 pyinstaller "$SPEC" --noconfirm
@@ -47,7 +66,7 @@ if [ ! -d "$APP_PATH" ]; then
 fi
 echo "    ✓ $APP_PATH créé"
 
-# ── 5. Création du DMG ────────────────────────────────────────────
+# ── 6. Création du DMG ────────────────────────────────────────────
 echo ""
 echo "==> Création du DMG..."
 rm -f "$DMG_OUT"
