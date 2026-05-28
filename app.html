@@ -198,6 +198,28 @@
   .drop-text { font-size:11px; color:var(--muted2); }
   #xlsx-status { font-size:11px; color:var(--accent); min-height:14px; }
 
+  /* update section */
+  .update-row {
+    display:flex; align-items:center; gap:10px;
+    padding:9px 11px; background:var(--card);
+    border:1px solid var(--border); border-radius:var(--radius);
+  }
+  .update-meta { flex:1; min-width:0; }
+  .update-title { font-size:12px; font-weight:600; color:var(--text); margin-bottom:3px; }
+  .update-status {
+    font-size:11px; color:var(--muted2);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .update-actions { display:flex; gap:8px; flex-shrink:0; }
+  .update-notice {
+    display:none; margin-top:8px; padding:10px 11px;
+    background:rgba(212,160,23,0.07);
+    border:1px solid rgba(212,160,23,0.35);
+    border-radius:var(--radius);
+  }
+  .update-notice.visible { display:block; }
+  .update-notice-text { font-size:11px; color:var(--text); margin-bottom:8px; }
+
   .xlsx-quality-label {
     font-size:9px; letter-spacing:1.5px; color:var(--muted2);
     text-transform:uppercase; margin-bottom:6px; font-weight:600;
@@ -354,6 +376,24 @@
     </div>
   </div>
 
+  <!-- UPDATES -->
+  <div class="section section-sm">
+    <div class="tc-label-row">Mises a jour</div>
+    <div class="update-row">
+      <div class="update-meta">
+        <div class="update-title">Gandalf OSINT <span id="app-version">v?</span></div>
+        <div class="update-status" id="update-status">Verification au demarrage...</div>
+      </div>
+      <div class="update-actions">
+        <button class="btn-outline" id="update-check-btn" onclick="checkUpdates(true)">Verifier</button>
+      </div>
+    </div>
+    <div class="update-notice" id="update-notice">
+      <div class="update-notice-text" id="update-notice-text"></div>
+      <button class="btn-gold" id="update-download-btn" onclick="downloadUpdate()">Telecharger</button>
+    </div>
+  </div>
+
   <!-- TRANSCODAGE -->
   <div class="section section-sm">
     <div class="tc-label-row">Transcodage</div>
@@ -413,12 +453,15 @@ let tcMode = 'prores';
 let videoInfos = [];
 let analysing = false;
 let downloading = false;
+let updateInfo = null;
 
 window.addEventListener('load', () => {
   pywebview.api.get_initial_state().then(s => {
     document.getElementById('folder-path-inline').textContent = s.output_dir;
+    document.getElementById('app-version').textContent = s.app_version || 'v?';
     if (s.transcode_mode) setTc(s.transcode_mode, false);
     if (s.cookies_browser) document.querySelectorAll('input[name=ck]').forEach(r => r.checked = r.value === s.cookies_browser);
+    setTimeout(() => checkUpdates(false), 600);
   });
 });
 
@@ -430,6 +473,11 @@ window.onEvent = (event, data) => {
   else if (event === 'progress')         setProgress(data);
   else if (event === 'status')           setStatus(data);
   else if (event === 'log')              appendLog(data);
+  else if (event === 'update_check_started')    onUpdateCheckStarted(data);
+  else if (event === 'update_check_result')     onUpdateCheckResult(data);
+  else if (event === 'update_download_started') onUpdateDownloadStarted(data);
+  else if (event === 'update_download_progress') onUpdateDownloadProgress(data);
+  else if (event === 'update_download_done')    onUpdateDownloadDone(data);
 };
 
 function setTc(mode, notify = true) {
@@ -572,6 +620,78 @@ function doDownloadXlsx() {
 
 function setCookies(browser) {
   pywebview.api.set_cookies_browser(browser);
+}
+
+function checkUpdates(manual) {
+  const btn = document.getElementById('update-check-btn');
+  btn.disabled = true;
+  document.getElementById('update-status').textContent = 'Verification...';
+  pywebview.api.check_for_update(Boolean(manual));
+}
+
+function downloadUpdate() {
+  const btn = document.getElementById('update-download-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin">○</span> Telechargement...';
+  pywebview.api.download_update();
+}
+
+function onUpdateCheckStarted() {
+  const btn = document.getElementById('update-check-btn');
+  btn.disabled = true;
+  document.getElementById('update-status').textContent = 'Verification...';
+}
+
+function onUpdateCheckResult(result) {
+  const btn = document.getElementById('update-check-btn');
+  const notice = document.getElementById('update-notice');
+  const noticeText = document.getElementById('update-notice-text');
+  btn.disabled = false;
+  updateInfo = result && result.state === 'available' ? result : null;
+
+  if (!result || result.state === 'error') {
+    const message = result && result.message ? result.message : 'Verification impossible.';
+    document.getElementById('update-status').textContent = message;
+    notice.classList.remove('visible');
+    return;
+  }
+  if (result.state === 'up_to_date') {
+    document.getElementById('update-status').textContent = 'A jour (' + result.latest_version + ')';
+    notice.classList.remove('visible');
+    return;
+  }
+  if (result.state === 'available') {
+    const assetName = result.asset ? result.asset.name : 'installateur';
+    document.getElementById('update-status').textContent = 'Nouvelle version disponible: ' + result.latest_version;
+    noticeText.textContent = result.latest_version + ' est disponible. Fichier: ' + assetName;
+    notice.classList.add('visible');
+  }
+}
+
+function onUpdateDownloadStarted() {
+  const btn = document.getElementById('update-download-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin">○</span> Telechargement...';
+  document.getElementById('update-status').textContent = 'Telechargement de la mise a jour...';
+}
+
+function onUpdateDownloadProgress(data) {
+  const pct = data && data.percent ? data.percent : 0;
+  const suffix = pct ? ' ' + pct + '%' : '';
+  document.getElementById('update-status').textContent = 'Telechargement...' + suffix;
+}
+
+function onUpdateDownloadDone(result) {
+  const btn = document.getElementById('update-download-btn');
+  btn.disabled = false;
+  btn.innerHTML = 'Telecharger';
+  if (result && result.state === 'done') {
+    document.getElementById('update-status').textContent = 'Telecharge dans Downloads: ' + result.name;
+    document.getElementById('update-notice').classList.remove('visible');
+  } else {
+    const message = result && result.message ? result.message : 'Telechargement impossible.';
+    document.getElementById('update-status').textContent = message;
+  }
 }
 
 function setProgress(pct) {

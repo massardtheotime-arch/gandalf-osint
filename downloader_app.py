@@ -6,6 +6,9 @@ import subprocess
 import shutil
 import re
 import platform
+import urllib.error
+import urllib.request
+from pathlib import Path
 
 import webview
 
@@ -15,11 +18,59 @@ except ImportError:
     pass
 
 IS_WINDOWS     = platform.system() == "Windows"
+IS_MACOS       = platform.system() == "Darwin"
 PRORES_PROFILE = "1"
 PRORES_EXT     = ".mov"
+APP_VERSION    = "v1.5"
+RELEASE_API_URL = "https://api.github.com/repos/massardtheotime-arch/gandalf-osint/releases/latest"
 
 # On Windows, hide console windows spawned by subprocess
 SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
+
+
+def parse_version(tag):
+    match = re.match(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$", str(tag or "").strip())
+    if not match:
+        return None
+    return tuple(int(part or 0) for part in match.groups())
+
+
+def is_newer_version(candidate, current):
+    candidate_version = parse_version(candidate)
+    current_version = parse_version(current)
+    if not candidate_version or not current_version:
+        return False
+    return candidate_version > current_version
+
+
+def select_release_asset(assets):
+    candidates = assets or []
+    if IS_WINDOWS:
+        extensions = (".exe",)
+    elif IS_MACOS:
+        extensions = (".dmg", ".zip")
+    else:
+        extensions = ()
+    for ext in extensions:
+        for asset in candidates:
+            name = asset.get("name", "")
+            if name.lower().endswith(ext) and asset.get("browser_download_url"):
+                return {
+                    "name": name,
+                    "url": asset["browser_download_url"],
+                    "size": asset.get("size") or 0,
+                }
+    return None
+
+
+def unique_download_path(folder, filename):
+    base, ext = os.path.splitext(filename)
+    candidate = os.path.join(folder, filename)
+    counter = 1
+    while os.path.exists(candidate):
+        candidate = os.path.join(folder, f"{base}-{counter}{ext}")
+        counter += 1
+    return candidate
 
 
 def resource_path(name):
@@ -162,6 +213,9 @@ class Api:
         self.ffmpeg_path    = find_ffmpeg()
         self._video_infos   = []
         self._xlsx_rows     = []
+        self._latest_update = None
+        self._update_checking = False
+        self._update_downloading = False
         self.running        = False
         self.analysing      = False
         self._last_file     = None
@@ -190,7 +244,26 @@ class Api:
             "ffmpeg_available":  bool(self.ffmpeg_path),
             "transcode_mode":    self.transcode_mode,
             "cookies_browser":   self.cookies_browser,
+            "app_version":       APP_VERSION,
         }
+
+    def check_for_update(self, manual=False):
+        if self._update_checking:
+            return {"state": "checking"}
+        self._update_checking = True
+        self._emit("update_check_started", {"manual": bool(manual)})
+        threading.Thread(target=self._check_update_worker, args=(bool(manual),), daemon=True).start()
+        return {"state": "checking"}
+
+    def download_update(self):
+        if self._update_downloading:
+            return {"state": "downloading"}
+        if not self._latest_update or not self._latest_update.get("asset"):
+            return {"state": "error", "message": "Aucune mise a jour disponible."}
+        self._update_downloading = True
+        self._emit("update_download_started", self._latest_update)
+        threading.Thread(target=self._download_update_worker, daemon=True).start()
+        return {"state": "downloading"}
 
     def set_cookies_browser(self, browser):
         # browser = "safari" | "chrome" | "firefox" | ""
@@ -287,6 +360,108 @@ class Api:
         payload = json.dumps(data) if data is not None else "null"
         if self._window:
             self._window.evaluate_js(f"window.onEvent('{event}', {payload})")
+
+    def _check_update_worker(self, manual):
+        try:
+            request = urllib.request.Request(
+                RELEASE_API_URL,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": f"GandalfOSINT/{APP_VERSION}",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=10) as response:
+                release = json.loads(response.read().decode("utf-8"))
+
+            latest_tag = release.get("tag_name", "")
+            if not parse_version(latest_tag):
+                result = {"state": "error", "message": "Version GitHub invalide."}
+            elif not is_newer_version(latest_tag, APP_VERSION):
+                self._latest_update = None
+                result = {
+                    "state": "up_to_date",
+                    "current_version": APP_VERSION,
+                    "latest_version": latest_tag,
+                    "manual": manual,
+                }
+            else:
+                asset = select_release_asset(release.get("assets", []))
+                if not asset:
+                    result = {
+                        "state": "error",
+                        "message": "Aucun installateur compatible trouve dans la release.",
+                        "latest_version": latest_tag,
+                        "release_url": release.get("html_url", ""),
+                    }
+                else:
+                    result = {
+                        "state": "available",
+                        "current_version": APP_VERSION,
+                        "latest_version": latest_tag,
+                        "release_name": release.get("name") or latest_tag,
+                        "release_url": release.get("html_url", ""),
+                        "asset": asset,
+                        "manual": manual,
+                    }
+                    self._latest_update = result
+            self._emit("update_check_result", result)
+        except urllib.error.URLError as e:
+            self._emit("update_check_result", {
+                "state": "error",
+                "message": f"Impossible de contacter GitHub: {e.reason}",
+                "manual": manual,
+            })
+        except Exception as e:
+            self._emit("update_check_result", {
+                "state": "error",
+                "message": str(e),
+                "manual": manual,
+            })
+        finally:
+            self._update_checking = False
+
+    def _download_update_worker(self):
+        update = self._latest_update or {}
+        asset = update.get("asset") or {}
+        url = asset.get("url")
+        name = asset.get("name") or "GandalfOSINT-update"
+        destination = unique_download_path(os.path.expanduser("~/Downloads"), name)
+        try:
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": f"GandalfOSINT/{APP_VERSION}"},
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                total = int(response.headers.get("Content-Length") or asset.get("size") or 0)
+                downloaded = 0
+                with open(destination, "wb") as f:
+                    while True:
+                        chunk = response.read(1024 * 256)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        pct = int(downloaded * 100 / total) if total else 0
+                        self._emit("update_download_progress", {
+                            "percent": pct,
+                            "downloaded": downloaded,
+                            "total": total,
+                            "name": name,
+                        })
+            self._emit("update_download_done", {
+                "state": "done",
+                "path": destination,
+                "name": name,
+            })
+            self.open_link(str(Path(destination)))
+        except Exception as e:
+            self._emit("update_download_done", {
+                "state": "error",
+                "message": str(e),
+                "name": name,
+            })
+        finally:
+            self._update_downloading = False
 
     def _cookie_opts(self):
         if not self.cookies_browser:
