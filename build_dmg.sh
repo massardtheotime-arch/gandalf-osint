@@ -49,6 +49,14 @@ echo ""
 echo "==> Mise à jour yt-dlp et pyinstaller..."
 pip3 install -q --upgrade yt-dlp pyinstaller pywebview openpyxl
 
+if [ -n "$GANDALF_VERSION" ]; then
+  printf "%s" "$GANDALF_VERSION" > version.txt
+elif git describe --tags --exact-match HEAD >/dev/null 2>&1; then
+  git describe --tags --exact-match HEAD > version.txt
+else
+  printf "%s" "dev" > version.txt
+fi
+
 # ── 4. Nettoyage des builds précédents ───────────────────────────
 echo ""
 echo "==> Nettoyage..."

@@ -12,6 +12,13 @@ pip install yt-dlp pywebview pyinstaller openpyxl pillow --quiet
 echo ==> Generation de l'icone Windows...
 python generate_icon.py
 
+if not "%GANDALF_VERSION%"=="" (
+  <nul set /p="%GANDALF_VERSION%" > version.txt
+) else (
+  git describe --tags --exact-match HEAD > version.txt 2>nul
+  if errorlevel 1 <nul set /p="dev" > version.txt
+)
+
 echo ==> Build PyInstaller...
 pyinstaller ^
   --onefile ^

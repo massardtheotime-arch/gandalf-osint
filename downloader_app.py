@@ -8,6 +8,10 @@ import re
 import platform
 import urllib.error
 import urllib.request
+import tempfile
+import zipfile
+import time
+import shlex
 from pathlib import Path
 
 import webview
@@ -48,7 +52,7 @@ def select_release_asset(assets):
     if IS_WINDOWS:
         extensions = (".exe",)
     elif IS_MACOS:
-        extensions = (".dmg", ".zip")
+        extensions = (".zip", ".dmg")
     else:
         extensions = ()
     for ext in extensions:
@@ -73,17 +77,48 @@ def unique_download_path(folder, filename):
     return candidate
 
 
+def current_app_bundle_path():
+    if not IS_MACOS or not getattr(sys, "frozen", False):
+        return None
+    executable = Path(sys.executable).resolve()
+    for path in (executable, *executable.parents):
+        if path.suffix == ".app":
+            return str(path)
+    return None
+
+
+def current_windows_exe_path():
+    if not IS_WINDOWS or not getattr(sys, "frozen", False):
+        return None
+    executable = Path(sys.executable).resolve()
+    if executable.suffix.lower() == ".exe":
+        return str(executable)
+    return None
+
+
 def resource_path(name):
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, name)
 
 
 def get_app_version():
+    env_version = os.environ.get("GANDALF_VERSION", "").strip()
+    if env_version:
+        return env_version
     try:
         with open(resource_path("version.txt"), "r", encoding="utf-8") as f:
             version = f.read().strip()
         return version or VERSION_FALLBACK
     except OSError:
+        pass
+    try:
+        repo_dir = os.path.dirname(os.path.abspath(__file__))
+        version = subprocess.check_output(
+            ["git", "describe", "--tags", "--exact-match", "HEAD"],
+            cwd=repo_dir, stderr=subprocess.DEVNULL, text=True,
+            creationflags=SUBPROCESS_FLAGS).strip()
+        return version or VERSION_FALLBACK
+    except Exception:
         return VERSION_FALLBACK
 
 
@@ -460,6 +495,8 @@ class Api:
                             "total": total,
                             "name": name,
                         })
+            if self._install_downloaded_update(destination):
+                return
             self._emit("update_download_done", {
                 "state": "done",
                 "path": destination,
@@ -474,6 +511,116 @@ class Api:
             })
         finally:
             self._update_downloading = False
+
+    def _install_downloaded_update(self, destination):
+        if IS_MACOS and destination.lower().endswith(".zip"):
+            return self._install_macos_zip_update(destination)
+        if IS_WINDOWS and destination.lower().endswith(".exe"):
+            return self._install_windows_exe_update(destination)
+        return False
+
+    def _install_macos_zip_update(self, destination):
+        current_app = current_app_bundle_path()
+        if not current_app:
+            return False
+        try:
+            extract_dir = tempfile.mkdtemp(prefix="gandalf-update-")
+            with zipfile.ZipFile(destination) as zf:
+                zf.extractall(extract_dir)
+            new_app = None
+            for root, dirs, _files in os.walk(extract_dir):
+                for dirname in dirs:
+                    if dirname == "GandalfOSINT.app":
+                        new_app = os.path.join(root, dirname)
+                        break
+                if new_app:
+                    break
+            if not new_app:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                return False
+
+            script_path = os.path.join(extract_dir, "install_update.sh")
+            pid = os.getpid()
+            script = f"""#!/bin/bash
+set -e
+APP_SRC={shlex.quote(new_app)}
+APP_DST={shlex.quote(current_app)}
+PID={pid}
+while kill -0 "$PID" 2>/dev/null; do
+  sleep 0.2
+done
+rm -rf "$APP_DST"
+ditto "$APP_SRC" "$APP_DST"
+xattr -dr com.apple.quarantine "$APP_DST" 2>/dev/null || true
+open "$APP_DST"
+rm -rf {shlex.quote(extract_dir)}
+"""
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(script)
+            os.chmod(script_path, 0o755)
+            subprocess.Popen(["/bin/bash", script_path], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+            self._emit("update_download_done", {
+                "state": "installing",
+                "message": "Installation de la mise a jour, relancement...",
+                "name": os.path.basename(destination),
+            })
+            time.sleep(0.6)
+            if self._window:
+                self._window.destroy()
+            return True
+        except Exception as e:
+            self._emit("update_download_done", {
+                "state": "error",
+                "message": f"Installation macOS impossible: {e}",
+                "name": os.path.basename(destination),
+            })
+            return True
+
+    def _install_windows_exe_update(self, destination):
+        current_exe = current_windows_exe_path()
+        if not current_exe:
+            return False
+        try:
+            temp_dir = tempfile.mkdtemp(prefix="gandalf-update-")
+            script_path = os.path.join(temp_dir, "install_update.cmd")
+            pid = os.getpid()
+            script = f"""@echo off
+set "APP_SRC={destination}"
+set "APP_DST={current_exe}"
+set "PID={pid}"
+:wait
+tasklist /FI "PID eq %PID%" | find "%PID%" >nul
+if not errorlevel 1 (
+  timeout /t 1 /nobreak >nul
+  goto wait
+)
+copy /Y "%APP_SRC%" "%APP_DST%" >nul
+start "" "%APP_DST%"
+del "%APP_SRC%" >nul 2>nul
+rmdir /S /Q "{temp_dir}" >nul 2>nul
+"""
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(script)
+            subprocess.Popen(["cmd", "/c", "start", "", script_path],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             creationflags=SUBPROCESS_FLAGS)
+            self._emit("update_download_done", {
+                "state": "installing",
+                "message": "Installation de la mise a jour, relancement...",
+                "name": os.path.basename(destination),
+            })
+            time.sleep(0.6)
+            if self._window:
+                self._window.destroy()
+            return True
+        except Exception as e:
+            self._emit("update_download_done", {
+                "state": "error",
+                "message": f"Installation Windows impossible: {e}",
+                "name": os.path.basename(destination),
+            })
+            return True
 
     def _cookie_opts(self):
         if not self.cookies_browser:

@@ -159,6 +159,11 @@ jobs:
           test -d "dist/GandalfOSINT.app" && echo ".app found" || true
           ls -laR dist/GandalfOSINT.app/ 2>/dev/null | head -30 || true
 
+      - name: Create macOS updater ZIP
+        run: |
+          rm -f GandalfOSINT.zip
+          ditto -c -k --keepParent "dist/GandalfOSINT.app" "GandalfOSINT.zip"
+
       - name: Create DMG
         run: |
           rm -f GandalfOSINT.dmg
@@ -176,8 +181,8 @@ jobs:
       - name: Fallback — zip if DMG failed
         if: ${{ !cancelled() }}
         run: |
-          if [ ! -f "GandalfOSINT.dmg" ]; then
-            echo "DMG creation failed, falling back to zip"
+          if [ ! -f "GandalfOSINT.dmg" ] && [ ! -f "GandalfOSINT.zip" ]; then
+            echo "DMG creation failed, creating zip"
             cd dist && zip -r ../GandalfOSINT.zip GandalfOSINT.app
           fi
 

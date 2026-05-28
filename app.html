@@ -459,8 +459,11 @@ let videoInfos = [];
 let analysing = false;
 let downloading = false;
 let updateInfo = null;
+let appReady = false;
 
-window.addEventListener('load', () => {
+function initApp() {
+  if (appReady || !window.pywebview || !pywebview.api) return;
+  appReady = true;
   pywebview.api.get_initial_state().then(s => {
     document.getElementById('folder-path-inline').textContent = s.output_dir;
     document.getElementById('app-version').textContent = s.app_version || 'v?';
@@ -468,7 +471,15 @@ window.addEventListener('load', () => {
     if (s.transcode_mode) setTc(s.transcode_mode, false);
     if (s.cookies_browser) document.querySelectorAll('input[name=ck]').forEach(r => r.checked = r.value === s.cookies_browser);
     setTimeout(() => checkUpdates(false), 600);
+  }).catch(() => {
+    appReady = false;
+    document.getElementById('update-status').textContent = 'Initialisation impossible.';
   });
+}
+
+window.addEventListener('pywebviewready', initApp);
+window.addEventListener('load', () => {
+  setTimeout(initApp, 200);
 });
 
 window.onEvent = (event, data) => {
@@ -629,6 +640,10 @@ function setCookies(browser) {
 }
 
 function checkUpdates(manual) {
+  if (!window.pywebview || !pywebview.api) {
+    document.getElementById('update-status').textContent = 'Interface pas encore prete.';
+    return;
+  }
   const btn = document.getElementById('update-check-btn');
   btn.disabled = true;
   document.getElementById('update-status').textContent = 'Verification...';
@@ -668,8 +683,10 @@ function onUpdateCheckResult(result) {
   }
   if (result.state === 'available') {
     const assetName = result.asset ? result.asset.name : 'installateur';
+    const lowerAssetName = assetName.toLowerCase();
     document.getElementById('update-status').textContent = 'Nouvelle version disponible: ' + result.latest_version;
     noticeText.textContent = result.latest_version + ' est disponible. Fichier: ' + assetName;
+    document.getElementById('update-download-btn').textContent = lowerAssetName.endsWith('.zip') || lowerAssetName.endsWith('.exe') ? 'Installer et relancer' : 'Telecharger';
     notice.classList.add('visible');
   }
 }
@@ -690,8 +707,11 @@ function onUpdateDownloadProgress(data) {
 function onUpdateDownloadDone(result) {
   const btn = document.getElementById('update-download-btn');
   btn.disabled = false;
-  btn.innerHTML = 'Telecharger';
-  if (result && result.state === 'done') {
+  const assetName = updateInfo && updateInfo.asset ? updateInfo.asset.name.toLowerCase() : '';
+  btn.innerHTML = assetName.endsWith('.zip') || assetName.endsWith('.exe') ? 'Installer et relancer' : 'Telecharger';
+  if (result && result.state === 'installing') {
+    document.getElementById('update-status').textContent = result.message || 'Installation de la mise a jour...';
+  } else if (result && result.state === 'done') {
     document.getElementById('update-status').textContent = 'Telecharge dans Downloads: ' + result.name;
     document.getElementById('update-notice').classList.remove('visible');
   } else {

@@ -10,6 +10,7 @@ dist/
 __pycache__/
 *.pyc
 *.pyo
+version.txt
 
 # Excel sources (données privées)
 *.xlsx

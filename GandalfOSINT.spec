@@ -1,7 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('app.html', '.'), ('version.txt', '.'), ('gandalf.gif', '.'), ('gollum.png', '.')]
+datas = [('app.html', '.'), ('gandalf.gif', '.'), ('gollum.png', '.')]
+if os.path.exists('version.txt'):
+    datas.append(('version.txt', '.'))
 binaries = [('/opt/homebrew/bin/ffmpeg', '.'), ('/opt/homebrew/bin/ffprobe', '.'), ('deno', '.')]
 hiddenimports = []
 tmp_ret = collect_all('yt_dlp')
