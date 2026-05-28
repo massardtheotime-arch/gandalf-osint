@@ -10,7 +10,6 @@ import urllib.error
 import urllib.request
 import tempfile
 import zipfile
-import time
 import shlex
 from pathlib import Path
 
@@ -67,16 +66,6 @@ def select_release_asset(assets):
     return None
 
 
-def unique_download_path(folder, filename):
-    base, ext = os.path.splitext(filename)
-    candidate = os.path.join(folder, filename)
-    counter = 1
-    while os.path.exists(candidate):
-        candidate = os.path.join(folder, f"{base}-{counter}{ext}")
-        counter += 1
-    return candidate
-
-
 def current_app_bundle_path():
     if not IS_MACOS or not getattr(sys, "frozen", False):
         return None
@@ -94,6 +83,53 @@ def current_windows_exe_path():
     if executable.suffix.lower() == ".exe":
         return str(executable)
     return None
+
+
+def app_data_dir():
+    if IS_WINDOWS:
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
+        path = os.path.join(base, "GandalfOSINT")
+    elif IS_MACOS:
+        path = os.path.expanduser("~/Library/Application Support/GandalfOSINT")
+    else:
+        path = os.path.expanduser("~/.gandalf-osint")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def pending_update_file():
+    return os.path.join(app_data_dir(), "pending_update.json")
+
+
+def update_download_dir():
+    path = os.path.join(app_data_dir(), "updates")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def write_pending_update(update, path):
+    payload = {
+        "version": update.get("latest_version", ""),
+        "asset_name": (update.get("asset") or {}).get("name", os.path.basename(path)),
+        "path": path,
+    }
+    with open(pending_update_file(), "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+
+
+def read_pending_update():
+    try:
+        with open(pending_update_file(), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def clear_pending_update():
+    try:
+        os.remove(pending_update_file())
+    except OSError:
+        pass
 
 
 def resource_path(name):
@@ -123,6 +159,113 @@ def get_app_version():
 
 
 APP_VERSION = get_app_version()
+
+
+def install_pending_update_on_startup():
+    pending = read_pending_update()
+    if not pending:
+        return False
+    version = pending.get("version", "")
+    destination = pending.get("path", "")
+    if not destination or not os.path.isfile(destination):
+        clear_pending_update()
+        return False
+    if not is_newer_version(version, APP_VERSION):
+        clear_pending_update()
+        return False
+    if IS_MACOS and destination.lower().endswith(".zip"):
+        started = start_macos_zip_install(destination)
+    elif IS_WINDOWS and destination.lower().endswith(".exe"):
+        started = start_windows_exe_install(destination)
+    else:
+        started = False
+    if started:
+        return True
+    return False
+
+
+def start_macos_zip_install(destination):
+    current_app = current_app_bundle_path()
+    if not current_app:
+        return False
+    try:
+        extract_dir = tempfile.mkdtemp(prefix="gandalf-update-")
+        with zipfile.ZipFile(destination) as zf:
+            zf.extractall(extract_dir)
+        new_app = None
+        for root, dirs, _files in os.walk(extract_dir):
+            for dirname in dirs:
+                if dirname == "GandalfOSINT.app":
+                    new_app = os.path.join(root, dirname)
+                    break
+            if new_app:
+                break
+        if not new_app:
+            shutil.rmtree(extract_dir, ignore_errors=True)
+            return False
+
+        script_path = os.path.join(extract_dir, "install_update.sh")
+        pid = os.getpid()
+        script = f"""#!/bin/bash
+set -e
+APP_SRC={shlex.quote(new_app)}
+APP_DST={shlex.quote(current_app)}
+PENDING={shlex.quote(pending_update_file())}
+UPDATE_FILE={shlex.quote(destination)}
+PID={pid}
+while kill -0 "$PID" 2>/dev/null; do
+  sleep 0.2
+done
+rm -rf "$APP_DST"
+ditto "$APP_SRC" "$APP_DST"
+xattr -dr com.apple.quarantine "$APP_DST" 2>/dev/null || true
+rm -f "$PENDING" "$UPDATE_FILE"
+open "$APP_DST"
+rm -rf {shlex.quote(extract_dir)}
+"""
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(script)
+        os.chmod(script_path, 0o755)
+        subprocess.Popen(["/bin/bash", script_path], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return True
+    except Exception:
+        return False
+
+
+def start_windows_exe_install(destination):
+    current_exe = current_windows_exe_path()
+    if not current_exe:
+        return False
+    try:
+        temp_dir = tempfile.mkdtemp(prefix="gandalf-update-")
+        script_path = os.path.join(temp_dir, "install_update.cmd")
+        pid = os.getpid()
+        script = f"""@echo off
+set "APP_SRC={destination}"
+set "APP_DST={current_exe}"
+set "PENDING={pending_update_file()}"
+set "PID={pid}"
+:wait
+tasklist /FI "PID eq %PID%" | find "%PID%" >nul
+if not errorlevel 1 (
+  timeout /t 1 /nobreak >nul
+  goto wait
+)
+copy /Y "%APP_SRC%" "%APP_DST%" >nul
+start "" "%APP_DST%"
+del "%APP_SRC%" >nul 2>nul
+del "%PENDING%" >nul 2>nul
+rmdir /S /Q "{temp_dir}" >nul 2>nul
+"""
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(script)
+        subprocess.Popen(["cmd", "/c", "start", "", script_path],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         creationflags=SUBPROCESS_FLAGS)
+        return True
+    except Exception:
+        return False
 
 
 def find_deno():
@@ -452,6 +595,9 @@ class Api:
                     }
                     self._latest_update = result
             self._emit("update_check_result", result)
+            if result.get("state") == "available":
+                self._emit("update_available", result)
+                self.download_update()
         except urllib.error.URLError as e:
             self._emit("update_check_result", {
                 "state": "error",
@@ -472,7 +618,7 @@ class Api:
         asset = update.get("asset") or {}
         url = asset.get("url")
         name = asset.get("name") or "GandalfOSINT-update"
-        destination = unique_download_path(os.path.expanduser("~/Downloads"), name)
+        destination = os.path.join(update_download_dir(), name)
         try:
             request = urllib.request.Request(
                 url,
@@ -495,14 +641,13 @@ class Api:
                             "total": total,
                             "name": name,
                         })
-            if self._install_downloaded_update(destination):
-                return
+            write_pending_update(update, destination)
             self._emit("update_download_done", {
-                "state": "done",
+                "state": "ready",
                 "path": destination,
                 "name": name,
+                "latest_version": update.get("latest_version", ""),
             })
-            self.open_link(str(Path(destination)))
         except Exception as e:
             self._emit("update_download_done", {
                 "state": "error",
@@ -511,116 +656,6 @@ class Api:
             })
         finally:
             self._update_downloading = False
-
-    def _install_downloaded_update(self, destination):
-        if IS_MACOS and destination.lower().endswith(".zip"):
-            return self._install_macos_zip_update(destination)
-        if IS_WINDOWS and destination.lower().endswith(".exe"):
-            return self._install_windows_exe_update(destination)
-        return False
-
-    def _install_macos_zip_update(self, destination):
-        current_app = current_app_bundle_path()
-        if not current_app:
-            return False
-        try:
-            extract_dir = tempfile.mkdtemp(prefix="gandalf-update-")
-            with zipfile.ZipFile(destination) as zf:
-                zf.extractall(extract_dir)
-            new_app = None
-            for root, dirs, _files in os.walk(extract_dir):
-                for dirname in dirs:
-                    if dirname == "GandalfOSINT.app":
-                        new_app = os.path.join(root, dirname)
-                        break
-                if new_app:
-                    break
-            if not new_app:
-                shutil.rmtree(extract_dir, ignore_errors=True)
-                return False
-
-            script_path = os.path.join(extract_dir, "install_update.sh")
-            pid = os.getpid()
-            script = f"""#!/bin/bash
-set -e
-APP_SRC={shlex.quote(new_app)}
-APP_DST={shlex.quote(current_app)}
-PID={pid}
-while kill -0 "$PID" 2>/dev/null; do
-  sleep 0.2
-done
-rm -rf "$APP_DST"
-ditto "$APP_SRC" "$APP_DST"
-xattr -dr com.apple.quarantine "$APP_DST" 2>/dev/null || true
-open "$APP_DST"
-rm -rf {shlex.quote(extract_dir)}
-"""
-            with open(script_path, "w", encoding="utf-8") as f:
-                f.write(script)
-            os.chmod(script_path, 0o755)
-            subprocess.Popen(["/bin/bash", script_path], stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
-            self._emit("update_download_done", {
-                "state": "installing",
-                "message": "Installation de la mise a jour, relancement...",
-                "name": os.path.basename(destination),
-            })
-            time.sleep(0.6)
-            if self._window:
-                self._window.destroy()
-            return True
-        except Exception as e:
-            self._emit("update_download_done", {
-                "state": "error",
-                "message": f"Installation macOS impossible: {e}",
-                "name": os.path.basename(destination),
-            })
-            return True
-
-    def _install_windows_exe_update(self, destination):
-        current_exe = current_windows_exe_path()
-        if not current_exe:
-            return False
-        try:
-            temp_dir = tempfile.mkdtemp(prefix="gandalf-update-")
-            script_path = os.path.join(temp_dir, "install_update.cmd")
-            pid = os.getpid()
-            script = f"""@echo off
-set "APP_SRC={destination}"
-set "APP_DST={current_exe}"
-set "PID={pid}"
-:wait
-tasklist /FI "PID eq %PID%" | find "%PID%" >nul
-if not errorlevel 1 (
-  timeout /t 1 /nobreak >nul
-  goto wait
-)
-copy /Y "%APP_SRC%" "%APP_DST%" >nul
-start "" "%APP_DST%"
-del "%APP_SRC%" >nul 2>nul
-rmdir /S /Q "{temp_dir}" >nul 2>nul
-"""
-            with open(script_path, "w", encoding="utf-8") as f:
-                f.write(script)
-            subprocess.Popen(["cmd", "/c", "start", "", script_path],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             creationflags=SUBPROCESS_FLAGS)
-            self._emit("update_download_done", {
-                "state": "installing",
-                "message": "Installation de la mise a jour, relancement...",
-                "name": os.path.basename(destination),
-            })
-            time.sleep(0.6)
-            if self._window:
-                self._window.destroy()
-            return True
-        except Exception as e:
-            self._emit("update_download_done", {
-                "state": "error",
-                "message": f"Installation Windows impossible: {e}",
-                "name": os.path.basename(destination),
-            })
-            return True
 
     def _cookie_opts(self):
         if not self.cookies_browser:
@@ -849,6 +884,9 @@ rmdir /S /Q "{temp_dir}" >nul 2>nul
 
 
 if __name__ == "__main__":
+    if install_pending_update_on_startup():
+        sys.exit(0)
+
     api = Api()
     html_path = resource_path("app.html")
     icon_path = resource_path("icon.icns")

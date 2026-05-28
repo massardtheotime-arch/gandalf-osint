@@ -198,28 +198,6 @@
   .drop-text { font-size:11px; color:var(--muted2); }
   #xlsx-status { font-size:11px; color:var(--accent); min-height:14px; }
 
-  /* update section */
-  .update-row {
-    display:flex; align-items:center; gap:10px;
-    padding:9px 11px; background:var(--card);
-    border:1px solid var(--border); border-radius:var(--radius);
-  }
-  .update-meta { flex:1; min-width:0; }
-  .update-title { font-size:12px; font-weight:600; color:var(--text); margin-bottom:3px; }
-  .update-status {
-    font-size:11px; color:var(--muted2);
-    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-  }
-  .update-actions { display:flex; gap:8px; flex-shrink:0; }
-  .update-notice {
-    display:none; margin-top:8px; padding:10px 11px;
-    background:rgba(212,160,23,0.07);
-    border:1px solid rgba(212,160,23,0.35);
-    border-radius:var(--radius);
-  }
-  .update-notice.visible { display:block; }
-  .update-notice-text { font-size:11px; color:var(--text); margin-bottom:8px; }
-
   .xlsx-quality-label {
     font-size:9px; letter-spacing:1.5px; color:var(--muted2);
     text-transform:uppercase; margin-bottom:6px; font-weight:600;
@@ -286,17 +264,18 @@
 
   /* ── TOAST ── */
   .toast {
-    position:fixed; top:20px; left:50%; transform:translateX(-50%) translateY(-80px);
+    position:fixed; right:18px; bottom:74px; transform:translateY(120px);
     background:var(--card); border:1px solid var(--accent);
     border-radius:10px; padding:14px 22px;
     display:flex; align-items:center; gap:10px;
     box-shadow:0 8px 32px rgba(0,0,0,0.5);
     z-index:999; transition:transform 0.35s cubic-bezier(0.34,1.56,0.64,1);
     pointer-events:none;
+    max-width:340px;
   }
-  .toast.show { transform:translateX(-50%) translateY(0); }
+  .toast.show { transform:translateY(0); }
   .toast-icon { font-size:20px; }
-  .toast-text { font-size:14px; font-weight:600; color:var(--accent); }
+  .toast-text { font-size:13px; font-weight:600; color:var(--accent); line-height:1.35; }
 
   @keyframes spin { to { transform:rotate(360deg); } }
   .spin { display:inline-block; animation:spin 0.8s linear infinite; }
@@ -380,24 +359,6 @@
     </div>
   </div>
 
-  <!-- UPDATES -->
-  <div class="section section-sm">
-    <div class="tc-label-row">Mises a jour</div>
-    <div class="update-row">
-      <div class="update-meta">
-        <div class="update-title">Gandalf OSINT <span id="app-version">v?</span></div>
-        <div class="update-status" id="update-status">Verification au demarrage...</div>
-      </div>
-      <div class="update-actions">
-        <button class="btn-outline" id="update-check-btn" onclick="checkUpdates(true)">Verifier</button>
-      </div>
-    </div>
-    <div class="update-notice" id="update-notice">
-      <div class="update-notice-text" id="update-notice-text"></div>
-      <button class="btn-gold" id="update-download-btn" onclick="downloadUpdate()">Telecharger</button>
-    </div>
-  </div>
-
   <!-- TRANSCODAGE -->
   <div class="section section-sm">
     <div class="tc-label-row">Transcodage</div>
@@ -441,6 +402,11 @@
   <span class="toast-text">Téléchargement terminé !</span>
 </div>
 
+<div class="toast" id="update-toast">
+  <span class="toast-icon">↻</span>
+  <span class="toast-text" id="update-toast-text">Redémarrez pour installer la mise à jour.</span>
+</div>
+
 <!-- BOTTOM BAR -->
 <div class="bottom-bar">
   <div class="bottom-progress" id="bottom-progress">
@@ -470,10 +436,9 @@ function initApp() {
     document.getElementById('bottom-version').textContent = s.app_version || 'v?';
     if (s.transcode_mode) setTc(s.transcode_mode, false);
     if (s.cookies_browser) document.querySelectorAll('input[name=ck]').forEach(r => r.checked = r.value === s.cookies_browser);
-    setTimeout(() => checkUpdates(false), 600);
+    setTimeout(checkForUpdatesSilently, 600);
   }).catch(() => {
     appReady = false;
-    document.getElementById('update-status').textContent = 'Initialisation impossible.';
   });
 }
 
@@ -490,11 +455,8 @@ window.onEvent = (event, data) => {
   else if (event === 'progress')         setProgress(data);
   else if (event === 'status')           setStatus(data);
   else if (event === 'log')              appendLog(data);
-  else if (event === 'update_check_started')    onUpdateCheckStarted(data);
-  else if (event === 'update_check_result')     onUpdateCheckResult(data);
-  else if (event === 'update_download_started') onUpdateDownloadStarted(data);
-  else if (event === 'update_download_progress') onUpdateDownloadProgress(data);
-  else if (event === 'update_download_done')    onUpdateDownloadDone(data);
+  else if (event === 'update_available') onUpdateAvailable(data);
+  else if (event === 'update_download_done') onUpdateDownloadDone(data);
 };
 
 function setTc(mode, notify = true) {
@@ -639,84 +601,21 @@ function setCookies(browser) {
   pywebview.api.set_cookies_browser(browser);
 }
 
-function checkUpdates(manual) {
-  if (!window.pywebview || !pywebview.api) {
-    document.getElementById('update-status').textContent = 'Interface pas encore prete.';
-    return;
-  }
-  const btn = document.getElementById('update-check-btn');
-  btn.disabled = true;
-  document.getElementById('update-status').textContent = 'Verification...';
-  pywebview.api.check_for_update(Boolean(manual));
+function checkForUpdatesSilently() {
+  if (!window.pywebview || !pywebview.api) return;
+  pywebview.api.check_for_update(false);
 }
 
-function downloadUpdate() {
-  const btn = document.getElementById('update-download-btn');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spin">○</span> Telechargement...';
-  pywebview.api.download_update();
-}
-
-function onUpdateCheckStarted() {
-  const btn = document.getElementById('update-check-btn');
-  btn.disabled = true;
-  document.getElementById('update-status').textContent = 'Verification...';
-}
-
-function onUpdateCheckResult(result) {
-  const btn = document.getElementById('update-check-btn');
-  const notice = document.getElementById('update-notice');
-  const noticeText = document.getElementById('update-notice-text');
-  btn.disabled = false;
-  updateInfo = result && result.state === 'available' ? result : null;
-
-  if (!result || result.state === 'error') {
-    const message = result && result.message ? result.message : 'Verification impossible.';
-    document.getElementById('update-status').textContent = message;
-    notice.classList.remove('visible');
-    return;
-  }
-  if (result.state === 'up_to_date') {
-    document.getElementById('update-status').textContent = 'A jour (' + result.latest_version + ')';
-    notice.classList.remove('visible');
-    return;
-  }
-  if (result.state === 'available') {
-    const assetName = result.asset ? result.asset.name : 'installateur';
-    const lowerAssetName = assetName.toLowerCase();
-    document.getElementById('update-status').textContent = 'Nouvelle version disponible: ' + result.latest_version;
-    noticeText.textContent = result.latest_version + ' est disponible. Fichier: ' + assetName;
-    document.getElementById('update-download-btn').textContent = lowerAssetName.endsWith('.zip') || lowerAssetName.endsWith('.exe') ? 'Installer et relancer' : 'Telecharger';
-    notice.classList.add('visible');
-  }
-}
-
-function onUpdateDownloadStarted() {
-  const btn = document.getElementById('update-download-btn');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spin">○</span> Telechargement...';
-  document.getElementById('update-status').textContent = 'Telechargement de la mise a jour...';
-}
-
-function onUpdateDownloadProgress(data) {
-  const pct = data && data.percent ? data.percent : 0;
-  const suffix = pct ? ' ' + pct + '%' : '';
-  document.getElementById('update-status').textContent = 'Telechargement...' + suffix;
+function onUpdateAvailable(result) {
+  updateInfo = result;
+  const version = result && result.latest_version ? result.latest_version : '';
+  showUpdateToast('Mise à jour ' + version + ' disponible. Téléchargement en arrière-plan…', false);
 }
 
 function onUpdateDownloadDone(result) {
-  const btn = document.getElementById('update-download-btn');
-  btn.disabled = false;
-  const assetName = updateInfo && updateInfo.asset ? updateInfo.asset.name.toLowerCase() : '';
-  btn.innerHTML = assetName.endsWith('.zip') || assetName.endsWith('.exe') ? 'Installer et relancer' : 'Telecharger';
-  if (result && result.state === 'installing') {
-    document.getElementById('update-status').textContent = result.message || 'Installation de la mise a jour...';
-  } else if (result && result.state === 'done') {
-    document.getElementById('update-status').textContent = 'Telecharge dans Downloads: ' + result.name;
-    document.getElementById('update-notice').classList.remove('visible');
-  } else {
-    const message = result && result.message ? result.message : 'Telechargement impossible.';
-    document.getElementById('update-status').textContent = message;
+  if (result && result.state === 'ready') {
+    const version = result.latest_version ? ' ' + result.latest_version : '';
+    showUpdateToast('Mise à jour' + version + ' prête. Redémarrez pour l’installer.', true);
   }
 }
 
@@ -733,6 +632,12 @@ function showToast() {
   const t = document.getElementById('toast');
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 3500);
+}
+function showUpdateToast(message, persist) {
+  const t = document.getElementById('update-toast');
+  document.getElementById('update-toast-text').textContent = message;
+  t.classList.add('show');
+  if (!persist) setTimeout(() => t.classList.remove('show'), 4500);
 }
 function appendLog(line) {
   const el = document.getElementById('log-box');
