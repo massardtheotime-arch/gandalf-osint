@@ -21,7 +21,7 @@ IS_WINDOWS     = platform.system() == "Windows"
 IS_MACOS       = platform.system() == "Darwin"
 PRORES_PROFILE = "1"
 PRORES_EXT     = ".mov"
-APP_VERSION    = "v1.5"
+VERSION_FALLBACK = "dev"
 RELEASE_API_URL = "https://api.github.com/repos/massardtheotime-arch/gandalf-osint/releases/latest"
 
 # On Windows, hide console windows spawned by subprocess
@@ -76,6 +76,18 @@ def unique_download_path(folder, filename):
 def resource_path(name):
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, name)
+
+
+def get_app_version():
+    try:
+        with open(resource_path("version.txt"), "r", encoding="utf-8") as f:
+            version = f.read().strip()
+        return version or VERSION_FALLBACK
+    except OSError:
+        return VERSION_FALLBACK
+
+
+APP_VERSION = get_app_version()
 
 
 def find_deno():

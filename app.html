@@ -279,6 +279,10 @@
     max-width:220px; display:none;
   }
   .dl-status-text.visible { display:block; }
+  .bottom-version {
+    color:var(--muted2); font-size:11px; font-weight:600;
+    min-width:36px; text-align:right; flex-shrink:0;
+  }
 
   /* ── TOAST ── */
   .toast {
@@ -445,6 +449,7 @@
   <div class="bottom-inner">
     <span class="dl-status-text" id="dl-status-text" style="flex:1"></span>
     <button class="btn-gold" id="dl-btn" onclick="doDownload()" style="display:none">+ Télécharger</button>
+    <span class="bottom-version" id="bottom-version">v?</span>
   </div>
 </div>
 
@@ -459,6 +464,7 @@ window.addEventListener('load', () => {
   pywebview.api.get_initial_state().then(s => {
     document.getElementById('folder-path-inline').textContent = s.output_dir;
     document.getElementById('app-version').textContent = s.app_version || 'v?';
+    document.getElementById('bottom-version').textContent = s.app_version || 'v?';
     if (s.transcode_mode) setTc(s.transcode_mode, false);
     if (s.cookies_browser) document.querySelectorAll('input[name=ck]').forEach(r => r.checked = r.value === s.cookies_browser);
     setTimeout(() => checkUpdates(false), 600);

@@ -46,6 +46,15 @@ jobs:
       - name: Generate Windows icon
         run: python generate_icon.py
 
+      - name: Set app version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            Set-Content -Path version.txt -Value $env:GITHUB_REF_NAME -NoNewline
+          } else {
+            Set-Content -Path version.txt -Value "dev" -NoNewline
+          }
+
       - name: Build EXE
         shell: pwsh
         run: |
@@ -56,6 +65,7 @@ jobs:
             "--collect-all", "yt_dlp",
             "--collect-all", "webview",
             "--add-data", "app.html;.",
+            "--add-data", "version.txt;.",
             "--add-data", "gandalf.gif;.",
             "--add-data", "gollum.png;.",
             "--add-binary", "ffmpeg.exe;.",
@@ -115,6 +125,14 @@ jobs:
           rm -f deno_arm64.zip deno_x86_64.zip deno_arm64 deno_x86_64
           echo "deno universal: $(file deno)"
 
+      - name: Set app version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            printf "%s" "${GITHUB_REF_NAME}" > version.txt
+          else
+            printf "%s" "dev" > version.txt
+          fi
+
       - name: Build APP
         run: |
           FFMPEG_PATH=$(which ffmpeg)
@@ -127,6 +145,7 @@ jobs:
             --collect-all yt_dlp \
             --collect-all webview \
             --add-data "app.html:." \
+            --add-data "version.txt:." \
             --add-data "gandalf.gif:." \
             --add-binary "$FFMPEG_PATH:." \
             --add-binary "$FFPROBE_PATH:." \

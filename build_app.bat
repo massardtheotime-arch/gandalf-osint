@@ -21,6 +21,7 @@ pyinstaller ^
   --collect-all yt_dlp ^
   --collect-all webview ^
   --add-data "app.html;." ^
+  --add-data "version.txt;." ^
   --add-data "gandalf.gif;." ^
   -y ^
   downloader_app.py
