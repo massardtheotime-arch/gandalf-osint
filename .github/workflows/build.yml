@@ -244,8 +244,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            GandalfOSINT-Windows/GandalfOSINT.exe
-            GandalfOSINT-Windows/GandalfOSINT-Setup.exe
+            GandalfOSINT-Windows/dist/GandalfOSINT.exe
+            GandalfOSINT-Windows/installer/GandalfOSINT-Setup.exe
             GandalfOSINT-macOS/GandalfOSINT.dmg
             GandalfOSINT-macOS/GandalfOSINT.zip
           fail_on_unmatched_files: false
