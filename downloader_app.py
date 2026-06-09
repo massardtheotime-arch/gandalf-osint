@@ -49,11 +49,23 @@ def is_newer_version(candidate, current):
 def select_release_asset(assets):
     candidates = assets or []
     if IS_WINDOWS:
+        preferred_names = ("gandalfosint.exe",)
         extensions = (".exe",)
     elif IS_MACOS:
+        preferred_names = ("gandalfosint.zip",)
         extensions = (".zip", ".dmg")
     else:
+        preferred_names = ()
         extensions = ()
+    for preferred in preferred_names:
+        for asset in candidates:
+            name = asset.get("name", "")
+            if name.lower() == preferred and asset.get("browser_download_url"):
+                return {
+                    "name": name,
+                    "url": asset["browser_download_url"],
+                    "size": asset.get("size") or 0,
+                }
     for ext in extensions:
         for asset in candidates:
             name = asset.get("name", "")
@@ -125,6 +137,26 @@ def read_pending_update():
         return None
 
 
+def pending_update_status():
+    pending = read_pending_update()
+    if not pending:
+        return None
+    version = pending.get("version", "")
+    path = pending.get("path", "")
+    if not path or not os.path.isfile(path):
+        clear_pending_update()
+        return None
+    if not is_newer_version(version, APP_VERSION):
+        clear_pending_update()
+        return None
+    return {
+        "state": "ready",
+        "latest_version": version,
+        "name": pending.get("asset_name") or os.path.basename(path),
+        "path": path,
+    }
+
+
 def clear_pending_update():
     try:
         os.remove(pending_update_file())
@@ -162,17 +194,10 @@ APP_VERSION = get_app_version()
 
 
 def install_pending_update_on_startup():
-    pending = read_pending_update()
+    pending = pending_update_status()
     if not pending:
         return False
-    version = pending.get("version", "")
     destination = pending.get("path", "")
-    if not destination or not os.path.isfile(destination):
-        clear_pending_update()
-        return False
-    if not is_newer_version(version, APP_VERSION):
-        clear_pending_update()
-        return False
     if IS_MACOS and destination.lower().endswith(".zip"):
         started = start_macos_zip_install(destination)
     elif IS_WINDOWS and destination.lower().endswith(".exe"):
@@ -435,6 +460,7 @@ class Api:
             "transcode_mode":    self.transcode_mode,
             "cookies_browser":   self.cookies_browser,
             "app_version":       APP_VERSION,
+            "pending_update":    pending_update_status(),
         }
 
     def check_for_update(self, manual=False):
@@ -448,12 +474,40 @@ class Api:
     def download_update(self):
         if self._update_downloading:
             return {"state": "downloading"}
+        pending = pending_update_status()
+        if pending:
+            self._emit("update_download_done", pending)
+            return pending
         if not self._latest_update or not self._latest_update.get("asset"):
             return {"state": "error", "message": "Aucune mise a jour disponible."}
         self._update_downloading = True
         self._emit("update_download_started", self._latest_update)
         threading.Thread(target=self._download_update_worker, daemon=True).start()
         return {"state": "downloading"}
+
+    def install_update_now(self):
+        if self.running or self.analysing:
+            return {"state": "busy", "message": "Terminez les telechargements avant d'installer la mise a jour."}
+        pending = pending_update_status()
+        if not pending:
+            return {"state": "error", "message": "Aucune mise a jour prete a installer."}
+        started = install_pending_update_on_startup()
+        if not started:
+            release_url = (self._latest_update or {}).get("release_url", "")
+            return {
+                "state": "error",
+                "message": "Installation automatique impossible. Ouvrez la release pour installer manuellement.",
+                "release_url": release_url,
+            }
+        self._emit("update_installing", pending)
+
+        def _quit():
+            import time
+            time.sleep(0.25)
+            os._exit(0)
+
+        threading.Thread(target=_quit, daemon=True).start()
+        return {"state": "installing"}
 
     def set_cookies_browser(self, browser):
         # browser = "safari" | "chrome" | "firefox" | ""
@@ -553,6 +607,12 @@ class Api:
 
     def _check_update_worker(self, manual):
         try:
+            pending = pending_update_status()
+            if pending:
+                pending["manual"] = manual
+                self._emit("update_check_result", pending)
+                self._emit("update_download_done", pending)
+                return
             request = urllib.request.Request(
                 RELEASE_API_URL,
                 headers={

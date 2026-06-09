@@ -266,16 +266,22 @@
   .toast {
     position:fixed; right:18px; bottom:74px; transform:translateY(120px);
     background:var(--card); border:1px solid var(--accent);
-    border-radius:10px; padding:14px 22px;
+    border-radius:8px; padding:14px 16px;
     display:flex; align-items:center; gap:10px;
     box-shadow:0 8px 32px rgba(0,0,0,0.5);
     z-index:999; transition:transform 0.35s cubic-bezier(0.34,1.56,0.64,1);
-    pointer-events:none;
-    max-width:340px;
+    pointer-events:auto;
+    max-width:380px;
   }
   .toast.show { transform:translateY(0); }
   .toast-icon { font-size:20px; }
   .toast-text { font-size:13px; font-weight:600; color:var(--accent); line-height:1.35; }
+  .toast-action {
+    padding:7px 11px; border-radius:6px; border:1px solid var(--accent);
+    background:var(--accent); color:#000; font-size:11px; font-weight:700;
+    cursor:pointer; white-space:nowrap; display:none;
+  }
+  .toast-action:hover { background:var(--accent2); }
 
   @keyframes spin { to { transform:rotate(360deg); } }
   .spin { display:inline-block; animation:spin 0.8s linear infinite; }
@@ -405,6 +411,7 @@
 <div class="toast" id="update-toast">
   <span class="toast-icon">↻</span>
   <span class="toast-text" id="update-toast-text">Redémarrez pour installer la mise à jour.</span>
+  <button class="toast-action" id="update-toast-action" onclick="installUpdateNow()">Installer</button>
 </div>
 
 <!-- BOTTOM BAR -->
@@ -415,6 +422,7 @@
   <div class="bottom-inner">
     <span class="dl-status-text" id="dl-status-text" style="flex:1"></span>
     <button class="btn-gold" id="dl-btn" onclick="doDownload()" style="display:none">+ Télécharger</button>
+    <button class="folder-change" id="update-check-btn" onclick="checkForUpdatesManual()">Maj</button>
     <span class="bottom-version" id="bottom-version">v?</span>
   </div>
 </div>
@@ -432,10 +440,10 @@ function initApp() {
   appReady = true;
   pywebview.api.get_initial_state().then(s => {
     document.getElementById('folder-path-inline').textContent = s.output_dir;
-    document.getElementById('app-version').textContent = s.app_version || 'v?';
     document.getElementById('bottom-version').textContent = s.app_version || 'v?';
     if (s.transcode_mode) setTc(s.transcode_mode, false);
     if (s.cookies_browser) document.querySelectorAll('input[name=ck]').forEach(r => r.checked = r.value === s.cookies_browser);
+    if (s.pending_update) onUpdateDownloadDone(s.pending_update);
     setTimeout(checkForUpdatesSilently, 600);
   }).catch(() => {
     appReady = false;
@@ -455,8 +463,13 @@ window.onEvent = (event, data) => {
   else if (event === 'progress')         setProgress(data);
   else if (event === 'status')           setStatus(data);
   else if (event === 'log')              appendLog(data);
+  else if (event === 'update_check_started') onUpdateCheckStarted(data);
+  else if (event === 'update_check_result') onUpdateCheckResult(data);
   else if (event === 'update_available') onUpdateAvailable(data);
+  else if (event === 'update_download_started') onUpdateDownloadStarted(data);
+  else if (event === 'update_download_progress') onUpdateDownloadProgress(data);
   else if (event === 'update_download_done') onUpdateDownloadDone(data);
+  else if (event === 'update_installing') onUpdateInstalling(data);
 };
 
 function setTc(mode, notify = true) {
@@ -606,17 +619,68 @@ function checkForUpdatesSilently() {
   pywebview.api.check_for_update(false);
 }
 
+function checkForUpdatesManual() {
+  if (!window.pywebview || !pywebview.api) return;
+  pywebview.api.check_for_update(true);
+}
+
+function onUpdateCheckStarted(result) {
+  if (result && result.manual) {
+    showUpdateToast('Recherche de mise à jour…', false, false);
+  }
+}
+
+function onUpdateCheckResult(result) {
+  if (!result || !result.manual) return;
+  if (result.state === 'up_to_date') {
+    showUpdateToast('Gandalf OSINT est à jour.', false, false);
+  } else if (result.state === 'error') {
+    showUpdateToast(result.message || 'Recherche de mise à jour impossible.', false, false);
+  }
+}
+
 function onUpdateAvailable(result) {
   updateInfo = result;
   const version = result && result.latest_version ? result.latest_version : '';
-  showUpdateToast('Mise à jour ' + version + ' disponible. Téléchargement en arrière-plan…', false);
+  showUpdateToast('Mise à jour ' + version + ' disponible. Téléchargement…', false, false);
+}
+
+function onUpdateDownloadStarted(result) {
+  const version = result && result.latest_version ? ' ' + result.latest_version : '';
+  showUpdateToast('Téléchargement de la mise à jour' + version + '…', true, false);
+}
+
+function onUpdateDownloadProgress(result) {
+  const pct = result && result.percent ? result.percent : 0;
+  const suffix = pct ? ' ' + pct + '%' : '';
+  showUpdateToast('Téléchargement de la mise à jour…' + suffix, true, false);
 }
 
 function onUpdateDownloadDone(result) {
   if (result && result.state === 'ready') {
     const version = result.latest_version ? ' ' + result.latest_version : '';
-    showUpdateToast('Mise à jour' + version + ' prête. Redémarrez pour l’installer.', true);
+    showUpdateToast('Mise à jour' + version + ' prête.', true, true);
+  } else if (result && result.state === 'error') {
+    showUpdateToast(result.message || 'Téléchargement de la mise à jour impossible.', false, false);
   }
+}
+
+async function installUpdateNow() {
+  const action = document.getElementById('update-toast-action');
+  action.disabled = true;
+  action.textContent = 'Installation…';
+  const result = await pywebview.api.install_update_now();
+  if (!result || result.state === 'installing') {
+    showUpdateToast('Installation de la mise à jour…', true, false);
+    return;
+  }
+  action.disabled = false;
+  action.textContent = 'Installer';
+  showUpdateToast(result.message || 'Installation automatique impossible.', true, false);
+}
+
+function onUpdateInstalling() {
+  showUpdateToast('Fermeture et installation de la mise à jour…', true, false);
 }
 
 function setProgress(pct) {
@@ -633,9 +697,13 @@ function showToast() {
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 3500);
 }
-function showUpdateToast(message, persist) {
+function showUpdateToast(message, persist, actionable) {
   const t = document.getElementById('update-toast');
+  const action = document.getElementById('update-toast-action');
   document.getElementById('update-toast-text').textContent = message;
+  action.style.display = actionable ? 'block' : 'none';
+  action.disabled = false;
+  action.textContent = 'Installer';
   t.classList.add('show');
   if (!persist) setTimeout(() => t.classList.remove('show'), 4500);
 }
