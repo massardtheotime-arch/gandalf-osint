@@ -235,18 +235,27 @@ def start_macos_zip_install(destination):
 set -e
 APP_SRC={shlex.quote(new_app)}
 APP_DST={shlex.quote(current_app)}
+BACKUP="$APP_DST.previous-update"
 PENDING={shlex.quote(pending_update_file())}
 UPDATE_FILE={shlex.quote(destination)}
 PID={pid}
 while kill -0 "$PID" 2>/dev/null; do
   sleep 0.2
 done
-rm -rf "$APP_DST"
-ditto "$APP_SRC" "$APP_DST"
-xattr -dr com.apple.quarantine "$APP_DST" 2>/dev/null || true
-rm -f "$PENDING" "$UPDATE_FILE"
-open "$APP_DST"
-rm -rf {shlex.quote(extract_dir)}
+rm -rf "$BACKUP"
+mv "$APP_DST" "$BACKUP"
+if ditto "$APP_SRC" "$APP_DST"; then
+  xattr -dr com.apple.quarantine "$APP_DST" 2>/dev/null || true
+  rm -rf "$BACKUP"
+  rm -f "$PENDING" "$UPDATE_FILE"
+  open "$APP_DST"
+  rm -rf {shlex.quote(extract_dir)}
+else
+  rm -rf "$APP_DST"
+  mv "$BACKUP" "$APP_DST"
+  open "$APP_DST"
+  exit 1
+fi
 """
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(script)
@@ -271,16 +280,29 @@ set "APP_SRC={destination}"
 set "APP_DST={current_exe}"
 set "PENDING={pending_update_file()}"
 set "PID={pid}"
+set "COPIED="
 :wait
 tasklist /FI "PID eq %PID%" | find "%PID%" >nul
 if not errorlevel 1 (
   timeout /t 1 /nobreak >nul
   goto wait
 )
-copy /Y "%APP_SRC%" "%APP_DST%" >nul
-start "" "%APP_DST%"
-del "%APP_SRC%" >nul 2>nul
-del "%PENDING%" >nul 2>nul
+for /L %%i in (1,1,20) do (
+  copy /Y "%APP_SRC%" "%APP_DST%" >nul 2>nul
+  if not errorlevel 1 (
+    set "COPIED=1"
+    goto copied
+  )
+  timeout /t 1 /nobreak >nul
+)
+:copied
+if defined COPIED (
+  start "" "%APP_DST%"
+  del "%APP_SRC%" >nul 2>nul
+  del "%PENDING%" >nul 2>nul
+) else (
+  start "" "%APP_DST%"
+)
 rmdir /S /Q "{temp_dir}" >nul 2>nul
 """
         with open(script_path, "w", encoding="utf-8") as f:
