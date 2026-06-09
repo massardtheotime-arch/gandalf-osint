@@ -49,7 +49,7 @@ def is_newer_version(candidate, current):
 def select_release_asset(assets):
     candidates = assets or []
     if IS_WINDOWS:
-        preferred_names = ("gandalfosint.exe",)
+        preferred_names = ("gandalfosint-setup.exe", "gandalfosint.exe")
         extensions = (".exe",)
     elif IS_MACOS:
         preferred_names = ("gandalfosint.zip",)
@@ -201,7 +201,11 @@ def install_pending_update_on_startup():
     if IS_MACOS and destination.lower().endswith(".zip"):
         started = start_macos_zip_install(destination)
     elif IS_WINDOWS and destination.lower().endswith(".exe"):
-        started = start_windows_exe_install(destination)
+        asset_name = (pending.get("name") or "").lower()
+        if "setup" in asset_name or "installer" in asset_name:
+            started = start_windows_installer_update(destination)
+        else:
+            started = start_windows_exe_install(destination)
     else:
         started = False
     if started:
@@ -302,6 +306,49 @@ if defined COPIED (
   del "%PENDING%" >nul 2>nul
 ) else (
   start "" "%APP_DST%"
+)
+rmdir /S /Q "{temp_dir}" >nul 2>nul
+"""
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(script)
+        subprocess.Popen(["cmd", "/c", "start", "", script_path],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         creationflags=SUBPROCESS_FLAGS)
+        return True
+    except Exception:
+        return False
+
+
+def start_windows_installer_update(destination):
+    current_exe = current_windows_exe_path()
+    if not current_exe:
+        return False
+    try:
+        temp_dir = tempfile.mkdtemp(prefix="gandalf-update-")
+        script_path = os.path.join(temp_dir, "install_update.cmd")
+        pid = os.getpid()
+        script = f"""@echo off
+set "INSTALLER={destination}"
+set "CURRENT_EXE={current_exe}"
+set "PENDING={pending_update_file()}"
+set "PID={pid}"
+:wait
+tasklist /FI "PID eq %PID%" | find "%PID%" >nul
+if not errorlevel 1 (
+  timeout /t 1 /nobreak >nul
+  goto wait
+)
+"%INSTALLER%" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS
+if errorlevel 1 (
+  start "" "%CURRENT_EXE%"
+  exit /b 1
+)
+del "%PENDING%" >nul 2>nul
+del "%INSTALLER%" >nul 2>nul
+if exist "%LOCALAPPDATA%\\Programs\\GandalfOSINT\\GandalfOSINT.exe" (
+  start "" "%LOCALAPPDATA%\\Programs\\GandalfOSINT\\GandalfOSINT.exe"
+) else (
+  start "" "%CURRENT_EXE%"
 )
 rmdir /S /Q "{temp_dir}" >nul 2>nul
 """

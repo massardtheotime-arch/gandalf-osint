@@ -1,6 +1,7 @@
 # PyInstaller
 build/
 dist/
+installer/*.exe
 *.spec
 
 # macOS

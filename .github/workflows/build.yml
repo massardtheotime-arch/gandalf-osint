@@ -28,6 +28,9 @@ jobs:
       - name: Install dependencies
         run: pip install pyinstaller pywebview yt-dlp openpyxl pillow
 
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
       - name: Download ffmpeg (Windows)
         shell: pwsh
         run: |
@@ -87,11 +90,36 @@ jobs:
           }
           Write-Host "GandalfOSINT.exe size: $((Get-Item dist/GandalfOSINT.exe).Length / 1MB) MB"
 
-      - name: Upload EXE artifact
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $env:GANDALF_VERSION = $env:GITHUB_REF_NAME
+          } else {
+            $env:GANDALF_VERSION = "dev"
+          }
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) {
+            $iscc = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          }
+          if (!(Test-Path $iscc)) {
+            Write-Error "ISCC.exe not found"
+            exit 1
+          }
+          & $iscc installer.iss
+          if (!(Test-Path "installer/GandalfOSINT-Setup.exe")) {
+            Write-Error "GandalfOSINT-Setup.exe not found"
+            exit 1
+          }
+          Write-Host "Installer size: $((Get-Item installer/GandalfOSINT-Setup.exe).Length / 1MB) MB"
+
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: GandalfOSINT-Windows
-          path: dist/GandalfOSINT.exe
+          path: |
+            dist/GandalfOSINT.exe
+            installer/GandalfOSINT-Setup.exe
 
   # ─────────────────────────────────────────────────────────────────────────────
   build-macos:
@@ -217,6 +245,7 @@ jobs:
         with:
           files: |
             GandalfOSINT-Windows/GandalfOSINT.exe
+            GandalfOSINT-Windows/GandalfOSINT-Setup.exe
             GandalfOSINT-macOS/GandalfOSINT.dmg
             GandalfOSINT-macOS/GandalfOSINT.zip
           fail_on_unmatched_files: false
