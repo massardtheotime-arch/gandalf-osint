@@ -451,8 +451,9 @@ def fmt_size(b):
 
 
 class VideoInfo:
-    def __init__(self, url, raw):
-        self.url       = url
+    def __init__(self, url, raw, entry_index=None):
+        self.url         = url
+        self.entry_index = entry_index
         self.title     = raw.get("title", url[:60])
         self.dur       = fmt_dur(raw.get("duration"))
         self.views     = fmt_views(raw.get("view_count"))
@@ -474,8 +475,17 @@ class VideoInfo:
                             "spec": f"bestvideo[height<={h}]+bestaudio/bestvideo[height<={h}]/best[height<={h}]/best",
                             "size": fmt_size(sz), "audio": False})
         if not out:
-            out.append({"label": "Meilleure", "badge": "VIDÉO",
-                        "spec": "bestvideo+bestaudio/best", "size": "", "audio": False})
+            images = [f for f in raw
+                      if f.get("vcodec", "none") in ("none", None, "")
+                      and f.get("acodec", "none") in ("none", None, "")]
+            if images:
+                best = max(images, key=lambda f: (f.get("width") or 0) * (f.get("height") or 0))
+                sz = best.get("filesize") or best.get("filesize_approx")
+                out.append({"label": "Image", "badge": "IMAGE",
+                            "spec": "best", "size": fmt_size(sz), "audio": False})
+            else:
+                out.append({"label": "Meilleure", "badge": "VIDÉO",
+                            "spec": "bestvideo+bestaudio/best", "size": "", "audio": False})
         audio = [f for f in raw
                  if f.get("vcodec", "none") in ("none", None, "")
                  and f.get("acodec", "none") not in ("none", None, "")]
@@ -804,9 +814,20 @@ class Api:
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     raw = ydl.extract_info(url, download=False)
-                info = VideoInfo(url, raw)
-                self._video_infos.append(info)
-                self._emit("video_analysed", info.to_dict())
+                entries = raw.get("entries")
+                if raw.get("_type") == "playlist" and entries is not None:
+                    entries = list(entries)
+                    count = len(entries)
+                    for idx, entry in enumerate(entries, 1):
+                        info = VideoInfo(url, entry or {}, entry_index=idx)
+                        if count > 1:
+                            info.title = f"{info.title} ({idx}/{count})"
+                        self._video_infos.append(info)
+                        self._emit("video_analysed", info.to_dict())
+                else:
+                    info = VideoInfo(url, raw)
+                    self._video_infos.append(info)
+                    self._emit("video_analysed", info.to_dict())
             except Exception as e:
                 self._emit("log", f"✗ Erreur analyse : {e}")
         self.analysing = False
@@ -827,7 +848,7 @@ class Api:
         self._last_file = None
         fmt = info.formats[info.sel]
         try:
-            opts = self._ydl_opts(fmt["spec"], n)
+            opts = self._ydl_opts(fmt["spec"], n, entry_index=info.entry_index)
             self._emit("log", f"[{n}/{total}] {info.title[:60]}")
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([info.url])
@@ -842,7 +863,7 @@ class Api:
         except Exception as e:
             self._emit("log", f"[{n}/{total}] ✗ {e}")
 
-    def _ydl_opts(self, spec, n):
+    def _ydl_opts(self, spec, n, entry_index=None):
         out = os.path.join(self.output_dir, "%(title)s_%(id)s.%(ext)s")
         pp  = []
         if spec == "bestaudio/best":
@@ -854,6 +875,8 @@ class Api:
             "quiet": True, "no_warnings": False, "merge_output_format": "mp4",
             "remote_components": ["ejs:github"],
         }
+        if entry_index is not None:
+            opts["playlist_items"] = str(entry_index)
         if self.ffmpeg_path:
             opts["ffmpeg_location"] = os.path.dirname(self.ffmpeg_path)
         opts.update(self._cookie_opts())
