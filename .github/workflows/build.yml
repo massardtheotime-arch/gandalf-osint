@@ -26,7 +26,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install pyinstaller pywebview yt-dlp openpyxl pillow
+        run: pip install pyinstaller "pywebview==5.4" yt-dlp openpyxl pillow "curl_cffi>=0.10"
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
@@ -137,7 +137,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pyinstaller pywebview yt-dlp openpyxl pillow
+          pip install pyinstaller "pywebview==5.4" yt-dlp openpyxl pillow "curl_cffi>=0.10"
           brew install ffmpeg create-dmg
 
       - name: Bundle deno (universal binary arm64 + x86_64)

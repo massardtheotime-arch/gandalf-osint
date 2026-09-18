@@ -47,7 +47,7 @@ fi
 # ── 3. Mise à jour des dépendances Python ─────────────────────────
 echo ""
 echo "==> Mise à jour yt-dlp et pyinstaller..."
-pip3 install -q --upgrade yt-dlp pyinstaller pywebview openpyxl
+pip3 install -q --upgrade yt-dlp pyinstaller openpyxl "curl_cffi>=0.10" "pywebview==5.4"
 
 if [ -n "$GANDALF_VERSION" ]; then
   printf "%s" "$GANDALF_VERSION" > version.txt

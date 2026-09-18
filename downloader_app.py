@@ -454,18 +454,20 @@ class VideoInfo:
     def __init__(self, url, raw, entry_index=None):
         self.url         = url
         self.entry_index = entry_index
+        self.id        = raw.get("id", "")
         self.title     = raw.get("title", url[:60])
         self.dur       = fmt_dur(raw.get("duration"))
         self.views     = fmt_views(raw.get("view_count"))
         self.channel   = raw.get("channel") or raw.get("uploader", "")
         self.thumb_url = raw.get("thumbnail", "")
-        self.formats   = self._parse(raw.get("formats", []))
+        self.formats   = self._parse(raw)
         self.sel       = 0
 
     def _parse(self, raw):
         out = []
+        formats = raw.get("formats", [])
         for h in [2160, 1440, 1080, 720, 480, 360, 240, 144]:
-            vids = [f for f in raw
+            vids = [f for f in formats
                     if f.get("height") == h
                     and f.get("vcodec", "none") not in ("none", None, "")]
             if vids:
@@ -475,18 +477,33 @@ class VideoInfo:
                             "spec": f"bestvideo[height<={h}]+bestaudio/bestvideo[height<={h}]/best[height<={h}]/best",
                             "size": fmt_size(sz), "audio": False})
         if not out:
-            images = [f for f in raw
-                      if f.get("vcodec", "none") in ("none", None, "")
-                      and f.get("acodec", "none") in ("none", None, "")]
-            if images:
-                best = max(images, key=lambda f: (f.get("width") or 0) * (f.get("height") or 0))
-                sz = best.get("filesize") or best.get("filesize_approx")
-                out.append({"label": "Image", "badge": "IMAGE",
-                            "spec": "best", "size": fmt_size(sz), "audio": False})
-            else:
+            # No format matched our standard height buckets (e.g. TikTok reports
+            # non-standard heights like 1024/1280) but real video streams may
+            # still exist — only treat this as an image post if there is no
+            # video-capable format at all.
+            has_video = any(f.get("vcodec", "none") not in ("none", None, "") for f in formats)
+            if has_video:
                 out.append({"label": "Meilleure", "badge": "VIDÉO",
                             "spec": "bestvideo+bestaudio/best", "size": "", "audio": False})
-        audio = [f for f in raw
+            else:
+                images = [f for f in formats
+                          if f.get("vcodec", "none") in ("none", None, "")
+                          and f.get("acodec", "none") in ("none", None, "")]
+                if images:
+                    best = max(images, key=lambda f: (f.get("width") or 0) * (f.get("height") or 0))
+                    sz = best.get("filesize") or best.get("filesize_approx")
+                    out.append({"label": "Image", "badge": "IMAGE",
+                                "spec": "best", "size": fmt_size(sz), "audio": False})
+                elif raw.get("thumbnail"):
+                    # Instagram photo posts (single or carousel item): yt-dlp exposes no
+                    # 'formats' for these, only a direct image URL via 'thumbnail'.
+                    out.append({"label": "Image", "badge": "IMAGE",
+                                "spec": "", "size": "", "audio": False,
+                                "direct_url": raw["thumbnail"]})
+                else:
+                    out.append({"label": "Meilleure", "badge": "VIDÉO",
+                                "spec": "bestvideo+bestaudio/best", "size": "", "audio": False})
+        audio = [f for f in formats
                  if f.get("vcodec", "none") in ("none", None, "")
                  and f.get("acodec", "none") not in ("none", None, "")]
         if audio:
@@ -805,6 +822,7 @@ class Api:
         cookie_opts = self._cookie_opts()
         self._emit("log", f"🍪 Cookies: {self.cookies_browser or 'aucun'}")
         ydl_opts = {"quiet": False, "no_warnings": False, "skip_download": True,
+                    "ignoreerrors": True, "ignore_no_formats_error": True,
                     "remote_components": ["ejs:github"]}
         if self.ffmpeg_path:
             ydl_opts["ffmpeg_location"] = os.path.dirname(self.ffmpeg_path)
@@ -847,6 +865,9 @@ class Api:
     def _run(self, n, info, total):
         self._last_file = None
         fmt = info.formats[info.sel]
+        if fmt.get("direct_url"):
+            self._download_image(n, info, fmt, total)
+            return
         try:
             opts = self._ydl_opts(fmt["spec"], n, entry_index=info.entry_index)
             self._emit("log", f"[{n}/{total}] {info.title[:60]}")
@@ -860,6 +881,22 @@ class Api:
                 self._transcode(n, dl, total, tc)
             else:
                 self._emit("log", f"[{n}/{total}] ✓ {os.path.basename(dl)}")
+        except Exception as e:
+            self._emit("log", f"[{n}/{total}] ✗ {e}")
+
+    def _download_image(self, n, info, fmt, total):
+        url = fmt["direct_url"]
+        try:
+            self._emit("log", f"[{n}/{total}] {info.title[:60]}")
+            ext = os.path.splitext(url.split("?", 1)[0])[1] or ".jpg"
+            safe_title = re.sub(r'[\\/:*?"<>|]', "_", info.title).strip() or "image"
+            dest = os.path.join(self.output_dir, f"{safe_title[:150]}_{info.id}{ext}")
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp, open(dest, "wb") as f:
+                shutil.copyfileobj(resp, f)
+            self._last_file = dest
+            self._emit("progress", 100)
+            self._emit("log", f"[{n}/{total}] ✓ {os.path.basename(dest)}")
         except Exception as e:
             self._emit("log", f"[{n}/{total}] ✗ {e}")
 
