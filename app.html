@@ -122,8 +122,6 @@
 
   /* ── PROGRESS ── */
   #progress-section { display:none; }
-  #progress-bar-wrap { height:3px; background:var(--border); border-radius:2px; overflow:hidden; margin-bottom:7px; }
-  #progress-bar { height:100%; width:0%; background:linear-gradient(90deg,var(--accent),var(--accent2)); border-radius:2px; transition:width 0.3s; }
   #status-text { font-size:11px; color:var(--muted2); min-height:14px; }
   #log-box {
     background:var(--card); border:1px solid var(--border);
@@ -335,7 +333,6 @@
 
   <!-- PROGRESS + LOG -->
   <div class="section section-sm" id="progress-section">
-    <div id="progress-bar-wrap"><div id="progress-bar"></div></div>
     <div id="status-text"></div>
     <div id="log-box"></div>
   </div>
@@ -713,7 +710,6 @@ function onUpdateInstalling() {
 
 function setProgress(pct) {
   const v = Math.min(pct, 100);
-  document.getElementById('progress-bar').style.width = v+'%';
   document.getElementById('bottom-progress-fill').style.width = v+'%';
 }
 function setStatus(txt) {
