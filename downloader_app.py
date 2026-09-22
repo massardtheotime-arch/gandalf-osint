@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 import tempfile
 import zipfile
+import stat
 import shlex
 from pathlib import Path
 
@@ -213,6 +214,34 @@ def install_pending_update_on_startup():
     return False
 
 
+def _extract_zip_preserving_unix_metadata(zf, extract_dir):
+    """zipfile.extractall() neither restores permission bits nor recreates
+    symlinks (it writes their target path as a plain text file instead),
+    which corrupts a macOS .app bundle — PyInstaller relies on symlinks in
+    Contents/Frameworks. Extract manually like ditto/unzip would."""
+    for info in zf.infolist():
+        target = os.path.join(extract_dir, info.filename)
+        mode = (info.external_attr >> 16) & 0xFFFF
+        if info.is_dir():
+            os.makedirs(target, exist_ok=True)
+            continue
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        if stat.S_ISLNK(mode):
+            link_target = zf.read(info).decode("utf-8")
+            if os.path.lexists(target):
+                os.remove(target)
+            os.symlink(link_target, target)
+        else:
+            with zf.open(info) as src, open(target, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            perm = mode & 0o777
+            if perm:
+                try:
+                    os.chmod(target, perm)
+                except OSError:
+                    pass
+
+
 def start_macos_zip_install(destination):
     current_app = current_app_bundle_path()
     if not current_app:
@@ -220,7 +249,7 @@ def start_macos_zip_install(destination):
     try:
         extract_dir = tempfile.mkdtemp(prefix="gandalf-update-")
         with zipfile.ZipFile(destination) as zf:
-            zf.extractall(extract_dir)
+            _extract_zip_preserving_unix_metadata(zf, extract_dir)
         new_app = None
         for root, dirs, _files in os.walk(extract_dir):
             for dirname in dirs:
