@@ -669,7 +669,7 @@ class Api:
     def import_xlsx(self):
         result = self._window.create_file_dialog(
             webview.OPEN_DIALOG,
-            file_types=('Excel files (*.xlsx *.xls)', 'All files (*.*)')
+            file_types=('Excel files (*.xlsx;*.xls)', 'All files (*.*)')
         )
         if not result:
             return None
