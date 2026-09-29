@@ -1066,9 +1066,10 @@ class Api:
     def _build_name(self, row):
         def s(v):
             if v is None: return ""
-            return str(v).strip().replace("/", "-")
-        return (f"{s(row.get('key'))}_{s(row.get('publication_date'))}_"
-                f"{s(row.get('description'))}_{s(row.get('location'))}")
+            if hasattr(v, "strftime"): v = v.strftime("%Y-%m-%d")
+            return re.sub(r'[\\/:*?"<>|]', "-", str(v).strip())
+        return (f"{s(row.get('key'))}_{s(row.get('publication_localdate'))}_"
+                f"{s(row.get('description_short'))}")
 
     def _run_named(self, n, url, custom_name, total):
         self._last_file = None
