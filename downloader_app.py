@@ -6,6 +6,7 @@ import subprocess
 import shutil
 import re
 import platform
+import time
 import urllib.error
 import urllib.request
 import tempfile
@@ -469,6 +470,24 @@ def find_ffprobe(ffmpeg_path):
     if os.path.isfile(candidate):
         return candidate
     return shutil.which("ffprobe")
+
+
+def remove_with_retry(path, attempts=8, delay=0.4):
+    """os.remove() that tolerates Windows briefly holding a lock on a file
+    right after the process writing it (ffmpeg, yt-dlp) exits — without
+    this, cleanup silently no-ops there and both the original and the
+    transcoded file end up on disk."""
+    for i in range(attempts):
+        try:
+            os.remove(path)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            if i == attempts - 1:
+                return False
+            time.sleep(delay)
+    return False
 
 
 def fmt_dur(secs):
@@ -1051,11 +1070,9 @@ class Api:
                 if tmp and os.path.isfile(tmp):
                     if os.path.isfile(dst): os.remove(dst)
                     os.rename(tmp, dst)
-                try:
-                    if os.path.abspath(src) != os.path.abspath(dst):
-                        os.remove(src)
-                except OSError:
-                    pass
+                if os.path.abspath(src) != os.path.abspath(dst):
+                    if not remove_with_retry(src):
+                        self._emit("log", f"[{n}/{total}] ⚠️  Fichier source non supprimé (verrouillé) : {os.path.basename(src)}")
                 lbl = "ProRes 422 LT" if mode == "prores" else "MP4 Premiere"
                 self._emit("log", f"[{n}/{total}] ✓ {lbl} : {os.path.basename(dst)}")
             else:
