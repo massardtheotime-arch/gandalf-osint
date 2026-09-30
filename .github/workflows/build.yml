@@ -26,7 +26,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install pyinstaller "pywebview==5.4" yt-dlp openpyxl pillow "curl_cffi>=0.10"
+        run: pip install pyinstaller "pywebview==5.4" yt-dlp openpyxl pillow "curl_cffi>=0.10" certifi
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
@@ -67,6 +67,7 @@ jobs:
             "--name", "GandalfOSINT",
             "--collect-all", "yt_dlp",
             "--collect-all", "webview",
+            "--collect-all", "certifi",
             "--add-data", "app.html;.",
             "--add-data", "version.txt;.",
             "--add-data", "gandalf.gif;.",
@@ -137,7 +138,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pyinstaller "pywebview==5.4" yt-dlp openpyxl pillow "curl_cffi>=0.10"
+          pip install pyinstaller "pywebview==5.4" yt-dlp openpyxl pillow "curl_cffi>=0.10" certifi
           brew install ffmpeg create-dmg
 
       - name: Bundle deno (universal binary arm64 + x86_64)
@@ -172,6 +173,7 @@ jobs:
             --icon icon.icns \
             --collect-all yt_dlp \
             --collect-all webview \
+            --collect-all certifi \
             --add-data "app.html:." \
             --add-data "version.txt:." \
             --add-data "gandalf.gif:." \

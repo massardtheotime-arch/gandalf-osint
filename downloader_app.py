@@ -12,7 +12,19 @@ import tempfile
 import zipfile
 import stat
 import shlex
+import ssl
 from pathlib import Path
+
+try:
+    import certifi
+    SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+except Exception:
+    # Fall back to the system trust store if certifi isn't available —
+    # on some Macs (esp. python.org installs without the cert-install
+    # script run) that store has no local issuer certificate, causing
+    # urlopen to fail with CERTIFICATE_VERIFY_FAILED. certifi's bundled
+    # CA list sidesteps that entirely and works the same on every machine.
+    SSL_CONTEXT = None
 
 import webview
 
@@ -745,7 +757,7 @@ class Api:
                     "User-Agent": f"GandalfOSINT/{APP_VERSION}",
                 },
             )
-            with urllib.request.urlopen(request, timeout=10) as response:
+            with urllib.request.urlopen(request, timeout=10, context=SSL_CONTEXT) as response:
                 release = json.loads(response.read().decode("utf-8"))
 
             latest_tag = release.get("tag_name", "")
@@ -809,7 +821,7 @@ class Api:
                 url,
                 headers={"User-Agent": f"GandalfOSINT/{APP_VERSION}"},
             )
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=30, context=SSL_CONTEXT) as response:
                 total = int(response.headers.get("Content-Length") or asset.get("size") or 0)
                 downloaded = 0
                 with open(destination, "wb") as f:
@@ -921,7 +933,7 @@ class Api:
             safe_title = re.sub(r'[\\/:*?"<>|]', "_", info.title).strip() or "image"
             dest = os.path.join(self.output_dir, f"{safe_title[:150]}_{info.id}{ext}")
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=30) as resp, open(dest, "wb") as f:
+            with urllib.request.urlopen(req, timeout=30, context=SSL_CONTEXT) as resp, open(dest, "wb") as f:
                 shutil.copyfileobj(resp, f)
             self._last_file = dest
             self._emit("progress", 100)
