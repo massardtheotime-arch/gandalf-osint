@@ -16,6 +16,7 @@ SAMPLES = [
     ("TikTok", "https://www.tiktok.com/@itamar_ben_gvir/video/7568955923486477576"),
     ("YouTube", "https://youtu.be/NFnTWw83ae8?si=40IfevzUEFd_qlwD"),
     ("X", "https://x.com/FabulasGuy/status/2092611204309229929"),
+    ("Facebook", "https://www.facebook.com/share/r/1DRSnBUVdk/"),
     ("Instagram post", "https://www.instagram.com/p/DciTNggDWZX"),
     ("Instagram reel", "https://www.instagram.com/reels/DcpT69wAGXH/"),
     ("Instagram carousel", "https://www.instagram.com/p/DbTUIqOjAWb/"),
