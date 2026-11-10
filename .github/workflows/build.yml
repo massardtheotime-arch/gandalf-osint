@@ -124,8 +124,20 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────────────────────
   build-macos:
-    name: macOS DMG
-    runs-on: macos-latest
+    name: macOS DMG (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Apple Silicon
+            runner: macos-latest
+            suffix: ""
+          - label: Intel
+            runner: macos-15-intel
+            suffix: "-Intel"
+    env:
+      SUFFIX: ${{ matrix.suffix }}
 
     steps:
       - name: Checkout
@@ -191,12 +203,12 @@ jobs:
 
       - name: Create macOS updater ZIP
         run: |
-          rm -f GandalfOSINT.zip
-          ditto -c -k --keepParent "dist/GandalfOSINT.app" "GandalfOSINT.zip"
+          rm -f "GandalfOSINT${SUFFIX}.zip"
+          ditto -c -k --keepParent "dist/GandalfOSINT.app" "GandalfOSINT${SUFFIX}.zip"
 
       - name: Create DMG
         run: |
-          rm -f GandalfOSINT.dmg
+          rm -f "GandalfOSINT${SUFFIX}.dmg"
           create-dmg \
             --volname "Gandalf OSINT" \
             --window-size 600 380 \
@@ -204,26 +216,26 @@ jobs:
             --icon "GandalfOSINT.app" 150 185 \
             --app-drop-link 450 185 \
             --no-internet-enable \
-            "GandalfOSINT.dmg" \
+            "GandalfOSINT${SUFFIX}.dmg" \
             "dist/GandalfOSINT.app" \
             || true
 
       - name: Fallback — zip if DMG failed
         if: ${{ !cancelled() }}
         run: |
-          if [ ! -f "GandalfOSINT.dmg" ] && [ ! -f "GandalfOSINT.zip" ]; then
+          if [ ! -f "GandalfOSINT${SUFFIX}.dmg" ] && [ ! -f "GandalfOSINT${SUFFIX}.zip" ]; then
             echo "DMG creation failed, creating zip"
-            cd dist && zip -r ../GandalfOSINT.zip GandalfOSINT.app
+            cd dist && zip -r "../GandalfOSINT${SUFFIX}.zip" GandalfOSINT.app
           fi
 
       - name: Upload macOS artifact
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: GandalfOSINT-macOS
+          name: GandalfOSINT-macOS${{ matrix.suffix }}
           path: |
-            GandalfOSINT.dmg
-            GandalfOSINT.zip
+            GandalfOSINT${{ matrix.suffix }}.dmg
+            GandalfOSINT${{ matrix.suffix }}.zip
           if-no-files-found: warn
 
   # ─────────────────────────────────────────────────────────────────────────────
@@ -250,5 +262,7 @@ jobs:
             GandalfOSINT-Windows/installer/GandalfOSINT-Setup.exe
             GandalfOSINT-macOS/GandalfOSINT.dmg
             GandalfOSINT-macOS/GandalfOSINT.zip
+            GandalfOSINT-macOS-Intel/GandalfOSINT-Intel.dmg
+            GandalfOSINT-macOS-Intel/GandalfOSINT-Intel.zip
           fail_on_unmatched_files: false
           generate_release_notes: true

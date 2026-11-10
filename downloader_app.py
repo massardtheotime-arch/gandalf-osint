@@ -60,13 +60,17 @@ def is_newer_version(candidate, current):
     return candidate_version > current_version
 
 
+def is_intel_mac():
+    return IS_MACOS and platform.machine() == "x86_64"
+
+
 def select_release_asset(assets):
     candidates = assets or []
     if IS_WINDOWS:
         preferred_names = ("gandalfosint-setup.exe", "gandalfosint.exe")
         extensions = (".exe",)
     elif IS_MACOS:
-        preferred_names = ("gandalfosint.zip",)
+        preferred_names = ("gandalfosint-intel.zip",) if is_intel_mac() else ("gandalfosint.zip",)
         extensions = (".zip", ".dmg")
     else:
         preferred_names = ()
@@ -83,6 +87,8 @@ def select_release_asset(assets):
     for ext in extensions:
         for asset in candidates:
             name = asset.get("name", "")
+            if IS_MACOS and ("intel" in name.lower()) != is_intel_mac():
+                continue
             if name.lower().endswith(ext) and asset.get("browser_download_url"):
                 return {
                     "name": name,
